@@ -1,0 +1,64 @@
+Enhanced Weekend Traffic Data Collection Summary
+===============================================
+
+Collection Date: 2025-08-07 11:04:23
+Collection Strategy: Optimal granularity based on New Relic API rules
+Total Records: 528
+Time Range: 2025-05-23 00:00:00+07:00 to 2025-08-02 23:00:00+07:00
+Weeks Collected: 12
+Weekend Periods: 11
+
+Collection Strategy Distribution:
+  10_evenly_spaced_points: 480 records (90.9%)
+  30min_granularity: 48 records (9.1%)
+
+Granularity Distribution:
+  hourly: 528 records (avg: 60.0 min intervals)
+
+Data Quality Distribution:
+  low: 192 records (36.4%)
+  high: 192 records (36.4%)
+  medium: 144 records (27.3%)
+
+ML Weight Distribution:
+  Weight 4: 192 records
+  Weight 5: 48 records
+  Weight 6: 48 records
+  Weight 7: 48 records
+  Weight 8: 48 records
+  Weight 9: 48 records
+  Weight 10: 48 records
+  Weight 11: 48 records
+
+Enhanced Features Available:
+  - timestamp
+  - timestamp_to
+  - timestamp_utc
+  - timestamp_to_utc
+
+ML Features Available (25 total):
+  - hour_cos
+  - hour_sin
+  - max_response_time
+  - min_response_time
+  - minute_cos
+  - minute_sin
+  - response_time
+  - response_time_change
+  - response_time_lag_1
+  - response_time_lag_2
+  - response_time_lag_3
+  - response_time_lag_5
+  - response_time_ma_3
+  - response_time_ma_5
+  - tpm
+  - tpm_change
+  - tpm_change_rate
+  - tpm_lag_1
+  - tpm_lag_2
+  - tpm_lag_3
+  - tpm_lag_5
+  - tpm_ma_3
+  - tpm_ma_5
+  - tpm_std_3
+  - tpm_std_5
