@@ -1,24 +1,24 @@
 Enhanced Weekend Traffic Data Collection Summary
 ===============================================
 
-Collection Date: 2025-08-07 11:54:50
+Collection Date: 2025-08-08 12:31:14
 Collection Strategy: Optimal granularity based on New Relic API rules
-Total Records: 528
-Time Range: 2025-05-23 00:00:00+07:00 to 2025-08-02 23:00:00+07:00
+Total Records: 576
+Time Range: 2025-05-23 00:00:00+07:00 to 2025-08-08 11:29:00+07:00
 Weeks Collected: 12
-Weekend Periods: 11
+Weekend Periods: 12
 
 Collection Strategy Distribution:
-  10_evenly_spaced_points: 480 records (90.9%)
-  30min_granularity: 48 records (9.1%)
+  10_evenly_spaced_points: 480 records (83.3%)
+  30min_granularity: 96 records (16.7%)
 
 Granularity Distribution:
-  hourly: 528 records (avg: 60.0 min intervals)
+  hourly: 576 records (avg: 60.0 min intervals)
 
 Data Quality Distribution:
-  low: 192 records (36.4%)
-  high: 192 records (36.4%)
-  medium: 144 records (27.3%)
+  high: 240 records (41.7%)
+  low: 192 records (33.3%)
+  medium: 144 records (25.0%)
 
 ML Weight Distribution:
   Weight 4: 192 records
@@ -29,6 +29,7 @@ ML Weight Distribution:
   Weight 9: 48 records
   Weight 10: 48 records
   Weight 11: 48 records
+  Weight 12: 48 records
 
 Enhanced Features Available:
   - timestamp

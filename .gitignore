@@ -109,4 +109,5 @@ venv.bak/
 *.pkl
 models/
 **/models/
+**/charts/
 

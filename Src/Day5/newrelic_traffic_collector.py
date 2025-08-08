@@ -471,7 +471,7 @@ def collect_and_save_newrelic_data(api_key, app_id="1080863725", weeks_back=12, 
         filepath = os.path.join('datasets', filename)
         combined_df.to_csv(filepath, index=False)
         print(f"\n✅ Enhanced data saved to {filepath}")
-        
+
         # Enhanced summary report
         summary_filename = filename.replace('.csv', '_enhanced_summary.txt')
         summary_filepath = os.path.join('datasets', summary_filename)
@@ -1125,12 +1125,8 @@ def create_traffic_visualization_suite_enhanced(csv_file_path=None, start_date=N
     print(f"🎯 Enhanced Traffic Visualization Suite completed! Created {len(figures)} visualizations.")
     return figures
 
-
-if __name__ == "__main__":
-    # Test period calculation
-    # test_weekend_periods()
-
-    print("\n" + "="*60)
+def main():
+    print("\n" + "=" * 60)
 
     # Load API key
     API_KEY = os.getenv("NEWRELIC_API_KEY")
@@ -1148,10 +1144,5 @@ if __name__ == "__main__":
         filename="newrelic_weekend_traffic_enhanced.csv"
     )
 
-    # if success:
-    #     print("\n🎉 Enhanced weekend traffic data collection completed!")
-    #     print("🔮 Ready for advanced ML model training with optimal granularity!")
-    #
-    #     # Create visualizations
-    #     print("\n🎨 Creating traffic visualizations...")
-    #     create_traffic_visualization_suite_enhanced(start_date='2025-07-24', end_date='2025-08-03')
+if __name__ == "__main__":
+    main()

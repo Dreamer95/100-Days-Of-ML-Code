@@ -793,6 +793,7 @@ class AdvancedTrafficPredictor:
             if target in self.best_models:
                 best_model_name = self.best_models[target]
                 model = self.models[target][best_model_name]
+                print(f"🔮 Used model {best_model_name}")
 
                 if best_model_name == 'SVR':
                     last_row_scaled = self.scalers[target].transform(last_row)
