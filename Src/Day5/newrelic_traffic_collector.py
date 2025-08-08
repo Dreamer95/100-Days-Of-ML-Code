@@ -56,59 +56,6 @@ def calculate_optimal_granularity_strategy(time_range_hours, data_age_days):
         else:  # > 63 days
             return 259200, int(time_range_hours / 72), 1, "3day_intervals"
 
-def get_weekend_traffic_periods(weeks_back=12):
-    """
-    Generate optimized time periods for weekend traffic collection (Thu 23:50 - Sun 00:00 GMT+7)
-    
-    Parameters:
-    -----------
-    weeks_back : int
-        Number of weeks to go back (default: 12 weeks ≈ 3 months)
-    
-    Returns:
-    --------
-    list: List of tuples (start_time_utc, end_time_utc, week_priority, data_age_days)
-    """
-    gmt7 = pytz.timezone('Asia/Bangkok')
-    utc = pytz.timezone('UTC')
-    
-    periods = []
-    now_gmt7 = datetime.now(gmt7)
-
-    for week in range(weeks_back):
-        # Calculate the target Thursday for this week
-        days_back = week * 7
-        target_date = now_gmt7 - timedelta(days=days_back)
-
-        # Find the Thursday of this week
-        days_since_thursday = (target_date.weekday() - 3) % 7
-        thursday = target_date - timedelta(days=days_since_thursday)
-
-        # Set to 23:50 Thursday GMT+7
-        start_time_gmt7 = thursday.replace(hour=23, minute=50, second=0, microsecond=0)
-
-        # End time: Sunday 00:00 GMT+7 (48 hours 10 minutes later)
-        sunday = thursday + timedelta(days=3)  # Thursday + 3 days = Sunday
-        end_time_gmt7 = sunday.replace(hour=0, minute=0, second=0, microsecond=0)
-
-        # Convert to UTC
-        start_time_utc = start_time_gmt7.astimezone(utc).replace(tzinfo=timezone.utc)
-        end_time_utc = end_time_gmt7.astimezone(utc).replace(tzinfo=timezone.utc)
-
-        # Skip future dates
-        if start_time_utc > datetime.now(timezone.utc):
-            continue
-
-        # Calculate priority (most recent week = highest priority)
-        week_priority = weeks_back - week
-
-        # Calculate data age
-        data_age_days = (datetime.now(timezone.utc) - start_time_utc).days
-
-        periods.append((start_time_utc, end_time_utc, week_priority, data_age_days))
-
-    return periods
-
 def collect_newrelic_data_with_optimal_granularity(api_key, app_id, metrics, start_time, end_time, 
                                                   week_priority=1, data_age_days=0):
     """
@@ -369,154 +316,397 @@ def process_newrelic_data_with_enhanced_metadata(data):
     
     return df
 
-def collect_and_save_newrelic_data(api_key, app_id="1080863725", weeks_back=12, filename="newrelic_weekend_traffic.csv"):
+
+def get_weekend_traffic_periods(weeks_back=12, focus_recent_weeks=True):
     """
-    Collect weekend traffic data from New Relic with optimal granularity strategy
+    Get weekend traffic periods: Thursday 23:50 to Sunday 00:00 (GMT+7)
+    Total duration: 48 hours 10 minutes per week
+
+    Parameters:
+    -----------
+    weeks_back : int
+        Total weeks to go back for data collection
+    focus_recent_weeks : bool
+        If True, prioritize recent weeks with more granular time periods
+
+    Returns:
+    --------
+    list
+        List of (start_time_utc, end_time_utc, week_priority, data_age_days) tuples
     """
-    print(f"🚀 Collecting optimized weekend traffic data for ML training...")
-    print(f"📅 Collecting {weeks_back} weeks of weekend periods (Thu 23:50 - Sun 00:00 GMT+7)")
-    print(f"🎯 Using optimal granularity strategy based on New Relic API rules")
-    
-    # Get weekend periods
-    periods = get_weekend_traffic_periods(weeks_back)
-    
+    from datetime import datetime, timedelta, timezone
+    import pytz
+
+    # GMT+7 timezone
+    gmt7 = pytz.timezone('Asia/Ho_Chi_Minh')
+
+    # Current time in GMT+7
+    now_gmt7 = datetime.now(gmt7)
+
+    periods = []
+
+    print(f"🕐 Weekend Period Definition: Thursday 23:50 to Sunday 00:00 (GMT+7)")
+    print(f"⏱️  Total duration per week: 48 hours 10 minutes")
+    print(f"🔄 Converting all times to UTC for New Relic API")
+
+    for week in range(weeks_back):
+        # Find the most recent Thursday 23:50 GMT+7
+        days_since_thursday = (now_gmt7.weekday() - 3) % 7
+        current_thursday = now_gmt7 - timedelta(days=days_since_thursday, weeks=week)
+
+        # Set exact weekend start: Thursday 23:50 GMT+7
+        weekend_start_gmt7 = current_thursday.replace(
+            hour=23, minute=50, second=0, microsecond=0
+        )
+
+        # Set exact weekend end: Sunday 00:00 GMT+7 (next week)
+        weekend_end_gmt7 = weekend_start_gmt7 + timedelta(days=3, hours=0, minutes=10)
+        weekend_end_gmt7 = weekend_end_gmt7.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # Convert to UTC for New Relic API
+        weekend_start_utc = weekend_start_gmt7.astimezone(timezone.utc)
+        weekend_end_utc = weekend_end_gmt7.astimezone(timezone.utc)
+
+        # Calculate data age and priority
+        data_age_days = (now_gmt7 - weekend_start_gmt7).days
+        week_priority = max(1, 13 - week)
+
+        print(f"\n📅 Week {week + 1}:")
+        print(
+            f"   GMT+7: {weekend_start_gmt7.strftime('%Y-%m-%d %H:%M')} to {weekend_end_gmt7.strftime('%Y-%m-%d %H:%M')}")
+        print(
+            f"   UTC:   {weekend_start_utc.strftime('%Y-%m-%d %H:%M')} to {weekend_end_utc.strftime('%Y-%m-%d %H:%M')}")
+        print(f"   📊 Age: {data_age_days} days, Priority: {week_priority}")
+
+        # Calculate total weekend duration
+        total_hours = (weekend_end_utc - weekend_start_utc).total_seconds() / 3600
+        print(f"   ⏱️  Duration: {total_hours:.2f} hours")
+
+        # Determine collection strategy based on data age and New Relic granularity table
+        if focus_recent_weeks and data_age_days <= 8:
+            # RECENT DATA (≤8 days): High-resolution strategy
+            print(f"   🔥 RECENT DATA: Using high-resolution collection")
+
+            # Split into optimal periods based on New Relic granularity table
+            # ≤3 hours = 1-minute granularity, 3-6 hours = 2-minute granularity
+            current_time = weekend_start_utc
+            period_count = 0
+
+            while current_time < weekend_end_utc:
+                # Use 3-hour chunks for 1-minute granularity (180 points)
+                period_duration = min(3.0, (weekend_end_utc - current_time).total_seconds() / 3600)
+                period_end = current_time + timedelta(hours=period_duration)
+                period_end = min(period_end, weekend_end_utc)
+
+                periods.append((
+                    current_time,
+                    period_end,
+                    week_priority,
+                    data_age_days
+                ))
+
+                period_duration_actual = (period_end - current_time).total_seconds() / 3600
+                print(f"     ⏰ Period {period_count + 1}: {period_duration_actual:.1f}h → 1-min granularity")
+
+                current_time = period_end
+                period_count += 1
+
+                if period_count >= 20:  # Safety limit
+                    break
+
+        elif data_age_days <= 14:
+            # MEDIUM-TERM DATA (8-14 days): Moderate resolution
+            print(f"   📊 MEDIUM-TERM DATA: Using moderate-resolution collection")
+
+            # Use 6-hour chunks for 5-minute granularity (72 points)
+            current_time = weekend_start_utc
+            period_count = 0
+
+            while current_time < weekend_end_utc:
+                period_duration = min(6.0, (weekend_end_utc - current_time).total_seconds() / 3600)
+                period_end = current_time + timedelta(hours=period_duration)
+                period_end = min(period_end, weekend_end_utc)
+
+                periods.append((
+                    current_time,
+                    period_end,
+                    week_priority,
+                    data_age_days
+                ))
+
+                period_duration_actual = (period_end - current_time).total_seconds() / 3600
+                print(f"     ⏰ Period {period_count + 1}: {period_duration_actual:.1f}h → 5-min granularity")
+
+                current_time = period_end
+                period_count += 1
+
+                if period_count >= 10:
+                    break
+
+        else:
+            # HISTORICAL DATA (>14 days): Low resolution
+            print(f"   📈 HISTORICAL DATA: Using low-resolution collection")
+
+            # Use larger chunks for 30-minute or 1-hour granularity
+            if total_hours <= 24:
+                # Single period with 30-minute granularity (48 points)
+                periods.append((
+                    weekend_start_utc,
+                    weekend_end_utc,
+                    week_priority,
+                    data_age_days
+                ))
+                print(f"     ⏰ Single period: {total_hours:.1f}h → 30-min granularity")
+            else:
+                # Split into 2 periods of ~24 hours each with 1-hour granularity
+                mid_point = weekend_start_utc + timedelta(hours=24)
+
+                periods.extend([
+                    (weekend_start_utc, mid_point, week_priority, data_age_days),
+                    (mid_point, weekend_end_utc, week_priority, data_age_days)
+                ])
+                print(f"     ⏰ Period 1: 24.0h → 1-hour granularity")
+                print(
+                    f"     ⏰ Period 2: {(weekend_end_utc - mid_point).total_seconds() / 3600:.1f}h → 1-hour granularity")
+
+    print(f"\n📊 Collection Summary:")
+    print(f"   Total periods: {len(periods)}")
+
+    # Analyze by data age
+    recent_periods = [p for p in periods if p[3] <= 8]
+    medium_periods = [p for p in periods if 8 < p[3] <= 14]
+    historical_periods = [p for p in periods if p[3] > 14]
+
+    print(f"   🔥 Recent (≤8 days): {len(recent_periods)} periods → 1-2min intervals")
+    print(f"   📊 Medium (8-14 days): {len(medium_periods)} periods → 5-15min intervals")
+    print(f"   📈 Historical (>14 days): {len(historical_periods)} periods → 30-60min intervals")
+
+    # Sort by priority (higher priority first) then by recency (newer first)
+    periods.sort(key=lambda x: (-x[2], x[3]))
+
+    return periods
+
+
+def collect_and_save_newrelic_data(api_key, app_id="1080863725", weeks_back=8, filename="newrelic_weekend_traffic.csv"):
+    """
+    Collect weekend traffic data with focus on recent high-resolution data
+
+    Parameters:
+    -----------
+    api_key : str
+        New Relic API key
+    app_id : str
+        Application ID
+    weeks_back : int
+        Number of weeks to collect (default 8 to focus on recent data)
+    filename : str
+        Output CSV filename
+
+    Returns:
+    --------
+    bool
+        Success status
+    """
+    print(f"🚀 Collecting RECENT-FOCUSED weekend traffic data for ML training...")
+    print(f"📅 Collecting {weeks_back} weeks with PRIORITY on last 8 days (data_age <= 8)")
+    print(f"🎯 Using NEW RELIC granularity table for optimal collection strategy")
+
+    # Get weekend periods with focus on recent data
+    periods = get_weekend_traffic_periods(weeks_back, focus_recent_weeks=True)
+
     if not periods:
         print("❌ No valid periods found")
         return False
-    
-    print(f"📊 Found {len(periods)} weekend periods to collect")
-    
-    # Show collection strategy summary
-    print(f"\n📋 Collection Strategy Summary:")
-    recent_periods = sum(1 for _, _, _, age in periods if age <= 8)
-    historical_periods = len(periods) - recent_periods
-    print(f"   Recent periods (≤8 days): {recent_periods} → High granularity (5-30 min intervals)")
-    print(f"   Historical periods (>8 days): {historical_periods} → Limited granularity (10 points or 1+ hour intervals)")
-    
-    # Define metrics for traffic prediction
+
+    print(f"\n📊 Found {len(periods)} periods to collect")
+
+    # Analyze collection strategy by data age
+    recent_periods = [p for p in periods if p[3] <= 8]
+    medium_periods = [p for p in periods if 8 < p[3] <= 14]
+    historical_periods = [p for p in periods if p[3] > 14]
+
+    print(f"\n📋 Enhanced Collection Strategy:")
+    print(f"   🔥 RECENT periods (≤8 days): {len(recent_periods)} → 1-2min granularity")
+    print(f"   📊 MEDIUM periods (8-14 days): {len(medium_periods)} → 5-15min granularity")
+    print(f"   📈 HISTORICAL periods (>14 days): {len(historical_periods)} → 30-60min granularity")
+
+    # Define metrics for comprehensive traffic analysis
     metrics = [
         "HttpDispatcher",  # Main web transaction metric
     ]
-    
+
     all_dataframes = []
-    
+    successful_collections = 0
+    total_data_points = 0
+
+    # Process periods with priority order (recent first)
     for i, (start_time, end_time, week_priority, data_age_days) in enumerate(periods):
-        print(f"\n📈 Collecting period {i+1}/{len(periods)}")
+        print(f"\n📈 Collecting period {i + 1}/{len(periods)}")
         print(f"   📅 {start_time.strftime('%Y-%m-%d %H:%M')} to {end_time.strftime('%Y-%m-%d %H:%M')} UTC")
         print(f"   🏆 Week priority: {week_priority}, Data age: {data_age_days} days")
-        
-        # Collect data for this period with optimal strategy
+
+        # Show expected granularity based on data age
+        if data_age_days <= 8:
+            expected_granularity = "1-2 minutes"
+            priority_level = "🔥 HIGH"
+        elif data_age_days <= 14:
+            expected_granularity = "5-15 minutes"
+            priority_level = "📊 MEDIUM"
+        else:
+            expected_granularity = "30-60 minutes"
+            priority_level = "📈 LOW"
+
+        print(f"   {priority_level} priority → Expected: {expected_granularity}")
+
+        # Collect data for this period
         data = collect_newrelic_data_with_optimal_granularity(
             api_key, app_id, metrics, start_time, end_time,
             week_priority=week_priority, data_age_days=data_age_days
         )
-        
+
         if data:
             # Process data with enhanced metadata
             df = process_newrelic_data_with_enhanced_metadata(data)
             if df is not None and not df.empty:
                 all_dataframes.append(df)
                 avg_interval = df['interval_minutes'].mean()
-                print(f"   ✅ Collected {len(df)} data points (avg interval: {avg_interval:.1f} min)")
+                data_points = len(df)
+                total_data_points += data_points
+                successful_collections += 1
+
+                print(f"   ✅ Collected {data_points} points (avg interval: {avg_interval:.1f} min)")
+
+                # Show quality metrics for recent data
+                if data_age_days <= 8:
+                    high_res_points = len(df[df['interval_minutes'] <= 5])
+                    print(
+                        f"   🎯 High-resolution points (≤5min): {high_res_points} ({high_res_points / data_points * 100:.1f}%)")
             else:
                 print(f"   ⚠️  No data processed for this period")
         else:
             print(f"   ❌ Failed to collect data for this period")
-        
-        # Rate limiting
-        time.sleep(0.5)
-    
+
+        # Enhanced rate limiting with priority consideration
+        if data_age_days <= 8:
+            time.sleep(0.3)  # Faster for recent data
+        else:
+            time.sleep(0.5)  # Standard rate limiting
+
     if not all_dataframes:
         print("❌ No data collected from any period")
         return False
-    
-    # Combine all data
-    print(f"\n🔄 Combining data from {len(all_dataframes)} periods...")
+
+    # Combine all data with priority weighting
+    print(f"\n🔄 Combining data from {successful_collections} successful periods...")
     combined_df = pd.concat(all_dataframes, ignore_index=True)
-    
+
     # Sort by timestamp for time series analysis
     combined_df = combined_df.sort_values('timestamp').reset_index(drop=True)
-    
+
     # Add sequence number for time series
     combined_df['sequence_id'] = range(len(combined_df))
-    
-    # Enhanced summary
-    print(f"\n📊 Enhanced Dataset Summary:")
-    print(f"   📈 Total records: {len(combined_df)}")
+
+    # Enhanced summary with focus on data quality distribution
+    print(f"\n📊 RECENT-FOCUSED Dataset Summary:")
+    print(f"   📈 Total records: {len(combined_df):,}")
     print(f"   📅 Time range: {combined_df['timestamp'].min()} to {combined_df['timestamp'].max()}")
     print(f"   🚀 TPM range: {combined_df['tpm'].min():.0f} - {combined_df['tpm'].max():.0f}")
-    print(f"   ⏱️  Response time range: {combined_df['response_time'].min():.1f} - {combined_df['response_time'].max():.1f}ms")
-    print(f"   📏 Interval range: {combined_df['interval_minutes'].min():.1f} - {combined_df['interval_minutes'].max():.1f} minutes")
-    
-    # Strategy distribution
+    print(
+        f"   ⏱️  Response time range: {combined_df['response_time'].min():.1f} - {combined_df['response_time'].max():.1f}ms")
+    print(
+        f"   📏 Interval range: {combined_df['interval_minutes'].min():.1f} - {combined_df['interval_minutes'].max():.1f} minutes")
+
+    # Data age distribution analysis
+    print(f"\n🎯 Data Age Distribution (ML Training Priority):")
+    age_groups = [
+        ("Recent (≤8 days)", combined_df['data_age_days'] <= 8),
+        ("Medium (8-14 days)", (combined_df['data_age_days'] > 8) & (combined_df['data_age_days'] <= 14)),
+        ("Historical (>14 days)", combined_df['data_age_days'] > 14)
+    ]
+
+    for group_name, mask in age_groups:
+        group_data = combined_df[mask]
+        if len(group_data) > 0:
+            avg_interval = group_data['interval_minutes'].mean()
+            avg_weight = group_data['ml_weight'].mean()
+            print(f"   {group_name}: {len(group_data):,} records ({len(group_data) / len(combined_df) * 100:.1f}%)")
+            print(f"      → Avg interval: {avg_interval:.1f}min, Avg ML weight: {avg_weight:.1f}")
+
+    # High-resolution data analysis
+    high_res_data = combined_df[combined_df['interval_minutes'] <= 5]
+    minute_data = combined_df[combined_df['interval_minutes'] <= 2]
+
+    print(f"\n⭐ High-Resolution Data Analysis:")
+    print(
+        f"   Fine granularity (≤5min): {len(high_res_data):,} records ({len(high_res_data) / len(combined_df) * 100:.1f}%)")
+    print(f"   Ultra-fine (≤2min): {len(minute_data):,} records ({len(minute_data) / len(combined_df) * 100:.1f}%)")
+
+    # Strategy effectiveness summary
     print(f"\n🎯 Collection Strategy Distribution:")
     strategy_dist = combined_df['collection_strategy'].value_counts()
     for strategy, count in strategy_dist.items():
-        print(f"   {strategy}: {count} records ({count/len(combined_df)*100:.1f}%)")
-    
-    # Granularity analysis
-    print(f"\n📏 Granularity Analysis:")
-    granularity_dist = combined_df['granularity_category'].value_counts()
-    for category, count in granularity_dist.items():
-        avg_interval = combined_df[combined_df['granularity_category'] == category]['interval_minutes'].mean()
-        print(f"   {category}: {count} records (avg: {avg_interval:.1f} min intervals)")
-    
-    # High priority data summary
-    high_priority_data = combined_df[combined_df['ml_weight'] >= 7]
-    print(f"\n⭐ High priority data (weight ≥ 7): {len(high_priority_data)} records ({len(high_priority_data)/len(combined_df)*100:.1f}%)")
-    
-    # Save to CSV with enhanced columns
+        print(f"   {strategy}: {count:,} records ({count / len(combined_df) * 100:.1f}%)")
+
+    # High priority data summary (for ML training)
+    high_priority_data = combined_df[combined_df['ml_weight'] >= 8]
+    print(
+        f"\n⭐ Premium ML Training Data (weight ≥ 8): {len(high_priority_data):,} records ({len(high_priority_data) / len(combined_df) * 100:.1f}%)")
+
+    # Save enhanced dataset
     try:
         os.makedirs('datasets', exist_ok=True)
         filepath = os.path.join('datasets', filename)
         combined_df.to_csv(filepath, index=False)
-        print(f"\n✅ Enhanced data saved to {filepath}")
+        print(f"\n✅ Recent-focused dataset saved to {filepath}")
 
-        # Enhanced summary report
-        summary_filename = filename.replace('.csv', '_enhanced_summary.txt')
+        # Enhanced summary report with focus metrics
+        summary_filename = filename.replace('.csv', '_recent_focused_summary.txt')
         summary_filepath = os.path.join('datasets', summary_filename)
         with open(summary_filepath, 'w') as f:
-            f.write(f"Enhanced Weekend Traffic Data Collection Summary\n")
-            f.write(f"===============================================\n\n")
+            f.write(f"Recent-Focused Weekend Traffic Data Collection Summary\n")
+            f.write(f"====================================================\n\n")
             f.write(f"Collection Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Collection Strategy: Optimal granularity based on New Relic API rules\n")
-            f.write(f"Total Records: {len(combined_df)}\n")
+            f.write(f"Collection Strategy: RECENT-FOCUSED with New Relic granularity optimization\n")
+            f.write(f"Focus Period: Last 8 days (data_age <= 8) with 1-2 minute intervals\n")
+            f.write(f"Total Records: {len(combined_df):,}\n")
             f.write(f"Time Range: {combined_df['timestamp'].min()} to {combined_df['timestamp'].max()}\n")
             f.write(f"Weeks Collected: {weeks_back}\n")
-            f.write(f"Weekend Periods: {len(periods)}\n\n")
-            
-            f.write("Collection Strategy Distribution:\n")
+            f.write(f"Total Periods: {len(periods)}\n")
+            f.write(f"Successful Collections: {successful_collections}\n\n")
+
+            f.write("Data Age Distribution:\n")
+            for group_name, mask in age_groups:
+                group_data = combined_df[mask]
+                if len(group_data) > 0:
+                    f.write(
+                        f"  {group_name}: {len(group_data):,} records ({len(group_data) / len(combined_df) * 100:.1f}%)\n")
+
+            f.write(f"\nHigh-Resolution Data:\n")
+            f.write(
+                f"  Fine granularity (≤5min): {len(high_res_data):,} records ({len(high_res_data) / len(combined_df) * 100:.1f}%)\n")
+            f.write(
+                f"  Ultra-fine (≤2min): {len(minute_data):,} records ({len(minute_data) / len(combined_df) * 100:.1f}%)\n")
+
+            f.write(f"\nCollection Strategy Distribution:\n")
             for strategy, count in strategy_dist.items():
-                f.write(f"  {strategy}: {count} records ({count/len(combined_df)*100:.1f}%)\n")
-            
-            f.write(f"\nGranularity Distribution:\n")
-            for category, count in granularity_dist.items():
-                avg_interval = combined_df[combined_df['granularity_category'] == category]['interval_minutes'].mean()
-                f.write(f"  {category}: {count} records (avg: {avg_interval:.1f} min intervals)\n")
-            
-            f.write(f"\nData Quality Distribution:\n")
-            for quality, count in combined_df['data_quality'].value_counts().items():
-                f.write(f"  {quality}: {count} records ({count/len(combined_df)*100:.1f}%)\n")
-            
-            f.write(f"\nML Weight Distribution:\n")
-            for weight, count in combined_df['ml_weight'].value_counts().sort_index().items():
-                f.write(f"  Weight {weight}: {count} records\n")
-            
-            f.write(f"\nEnhanced Features Available:\n")
-            timestamp_cols = [col for col in combined_df.columns if 'timestamp' in col.lower()]
-            for col in timestamp_cols:
-                f.write(f"  - {col}\n")
-            
-            feature_cols = [col for col in combined_df.columns if any(x in col for x in ['tpm', 'response_time', 'lag', 'ma', 'change', 'sin', 'cos'])]
-            f.write(f"\nML Features Available ({len(feature_cols)} total):\n")
-            for col in sorted(feature_cols):
-                f.write(f"  - {col}\n")
-        
-        print(f"📋 Enhanced summary report saved to {summary_filepath}")
+                f.write(f"  {strategy}: {count:,} records ({count / len(combined_df) * 100:.1f}%)\n")
+
+            f.write(f"\nML Training Quality Metrics:\n")
+            f.write(f"  Premium data (weight ≥ 8): {len(high_priority_data):,} records\n")
+            f.write(f"  Average ML weight: {combined_df['ml_weight'].mean():.2f}\n")
+            f.write(
+                f"  Recent data percentage: {len(combined_df[combined_df['data_age_days'] <= 8]) / len(combined_df) * 100:.1f}%\n")
+
+        print(f"✅ Enhanced summary saved to {summary_filepath}")
+
+        print(f"\n🎉 RECENT-FOCUSED collection completed successfully!")
+        print(f"📊 Collected {len(combined_df):,} total records")
+        print(f"🔥 {len(combined_df[combined_df['data_age_days'] <= 8]):,} recent high-quality records for ML training")
+
         return True
-        
+
     except Exception as e:
-        print(f"❌ Error saving files: {e}")
+        print(f"❌ Error saving data: {e}")
         return False
 
 def test_weekend_periods():
