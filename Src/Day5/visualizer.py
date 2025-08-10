@@ -3,7 +3,7 @@ from Src.Day5.newrelic_traffic_collector import create_traffic_visualization_sui
 def main():
     print("\n🎨 Creating traffic visualizations...")
     create_traffic_visualization_suite_enhanced(
-        start_date='2025-08-01',
+        start_date='2025-05-01',
         end_date='2025-08-10'
     )
 

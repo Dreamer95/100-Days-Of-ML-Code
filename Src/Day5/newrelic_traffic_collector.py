@@ -2,7 +2,7 @@ import requests
 import pandas as pd
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time as dtime
 import pytz
 # Add numpy import for circular encoding
 import numpy as np
@@ -280,7 +280,38 @@ def process_newrelic_data_with_enhanced_metadata(data):
     
     # Sort by timestamp
     df = df.sort_values('timestamp').reset_index(drop=True)
-    
+
+    def compute_push_features(ts_gmt7):
+        # ts_gmt7: pandas.Timestamp (tz-aware, GMT+7)
+        hour = ts_gmt7.hour
+        minute = ts_gmt7.minute
+
+        # Xác định lần push gần nhất
+        if hour > 12 or (hour == 12 and minute >= 0):
+            # Sau hoặc đúng 12:00 hôm nay -> lần push gần nhất là 12:00 hôm nay
+            last_push_date = ts_gmt7.date()
+            last_push_time = dtime(12, 0)
+        elif hour > 3 or (hour == 3 and minute >= 0):
+            # Từ 03:00 đến trước 12:00 -> lần push gần nhất là 03:00 hôm nay
+            last_push_date = ts_gmt7.date()
+            last_push_time = dtime(3, 0)
+        else:
+            # Trước 03:00 -> lần push gần nhất là 12:00 ngày hôm qua
+            last_push_date = (ts_gmt7 - timedelta(days=1)).date()
+            last_push_time = dtime(12, 0)
+
+        # Tạo datetime tz-aware tại GMT+7 cho last push
+        last_push_dt = df.loc[0, 'timestamp'].tz  # lấy tzinfo GMT+7 sẵn có
+        last_push_dt = datetime.combine(last_push_date, last_push_time).replace(tzinfo=last_push_dt)
+
+        minutes_since = int((ts_gmt7 - last_push_dt).total_seconds() // 60)
+        push_active = 1 if minutes_since == 0 else 0
+        return pd.Series({'push_notification_active': push_active, 'minutes_since_push': minutes_since})
+
+    push_df = df['timestamp'].apply(compute_push_features)
+    df['push_notification_active'] = push_df['push_notification_active'].astype(int)
+    df['minutes_since_push'] = push_df['minutes_since_push'].astype(int)
+
     # Add time-based features for ML
     df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)  # Circular encoding
     df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
@@ -360,8 +391,8 @@ def get_weekend_traffic_periods(weeks_back=12, focus_recent_weeks=True):
         )
 
         # Set exact weekend end: Sunday 00:00 GMT+7 (next week)
-        weekend_end_gmt7 = weekend_start_gmt7 + timedelta(days=3, hours=0, minutes=10)
-        weekend_end_gmt7 = weekend_end_gmt7.replace(hour=0, minute=0, second=0, microsecond=0)
+        weekend_end_gmt7 = weekend_start_gmt7 + timedelta(days=2, hours=0, minutes=10)
+        weekend_end_gmt7 = weekend_end_gmt7.replace(hour=23, minute=59, second=59, microsecond=999_999)
 
         # Convert to UTC for New Relic API
         weekend_start_utc = weekend_start_gmt7.astimezone(timezone.utc)
@@ -1314,6 +1345,71 @@ def create_traffic_visualization_suite_enhanced(csv_file_path=None, start_date=N
 
     print(f"🎯 Enhanced Traffic Visualization Suite completed! Created {len(figures)} visualizations.")
     return figures
+
+# ===== Helper for live inference: fetch last 3 hours at 1-minute granularity =====
+
+def get_recent_3h_1min_dataframe(api_key=None, app_id=None, metric_name="HttpDispatcher"):
+    """
+    Fetch last 3 hours of New Relic metric data at ~1-minute granularity and return
+    a minimal DataFrame suitable for model feature creation.
+
+    Parameters:
+    - api_key: New Relic API Key (falls back to env NEWRELIC_API_KEY/NEW_RELIC_API_KEY)
+    - app_id: New Relic Application ID (falls back to env NEWRELIC_APP_ID/NEW_RELIC_APP_ID)
+    - metric_name: Metric to query (default 'HttpDispatcher')
+
+    Returns:
+    - pandas.DataFrame with at least ['timestamp', 'tpm'] columns, sorted by timestamp.
+    """
+    # Lazy imports and env fallbacks
+    if api_key is None:
+        api_key = os.getenv("NEWRELIC_API_KEY") or os.getenv("NEW_RELIC_API_KEY")
+    if app_id is None:
+        app_id = os.getenv("NEWRELIC_APP_ID") or os.getenv("NEW_RELIC_APP_ID")
+
+    if not api_key or not app_id:
+        print("❌ Missing New Relic credentials. Set NEWRELIC_API_KEY and NEWRELIC_APP_ID or pass via arguments.")
+        return None
+
+    try:
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(hours=3)
+
+        data = collect_newrelic_data_with_optimal_granularity(
+            api_key=api_key,
+            app_id=app_id,
+            metrics=[metric_name],
+            start_time=start_time,
+            end_time=end_time,
+            week_priority=10,
+            data_age_days=0,
+        )
+
+        if not data:
+            print("❌ No data returned from New Relic API for the recent 3h window.")
+            return None
+
+        df = process_newrelic_data_with_enhanced_metadata(data)
+        if df is None or df.empty:
+            print("⚠️ No timeslices processed for the recent 3h window.")
+            return None
+
+        # Ensure required columns exist
+        if 'timestamp' not in df.columns or 'tpm' not in df.columns:
+            print("❌ Processed data missing required columns 'timestamp' and 'tpm'.")
+            return None
+
+        # Keep only necessary columns for the predictor's feature creation
+        df_min = df[['timestamp', 'tpm']].copy()
+        df_min = df_min.sort_values('timestamp').reset_index(drop=True)
+
+        # Clean/clip TPM values and forward/back fill if there are rare gaps
+        df_min['tpm'] = df_min['tpm'].ffill().bfill().clip(lower=0)
+
+        return df_min
+    except Exception as e:
+        print(f"❌ Error fetching recent 3h data: {e}")
+        return None
 
 def main():
     print("\n" + "=" * 60)

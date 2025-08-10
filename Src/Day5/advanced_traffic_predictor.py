@@ -26,9 +26,11 @@ class AdvancedTrafficPredictor:
         self.scalers = {}
         self.best_models = {}
         self.model_performance = {}
+        self.tpm_thresholds = None
+        self.tpm_thresholds_stats = None
 
         # Data file path
-        self.data_file_path = "/Users/dongdinh/Documents/Learning/100-Days-Of-ML-Code/Src/Day5/datasets/newrelic_weekend_traffic_enhanced.csv"
+        self.data_file_path = "/Users/dinhngocdong/Documents/learning/100-Days-Of-ML-Code/Src/Day5/datasets/newrelic_weekend_traffic_enhanced.csv"
 
         # Feature and target columns
         self.feature_columns = [
@@ -37,7 +39,9 @@ class AdvancedTrafficPredictor:
             'tpm_rolling_mean_5', 'tpm_rolling_mean_15', 'tpm_rolling_mean_30',
             'tpm_rolling_std_5', 'tpm_rolling_std_15',
             'hour_sin', 'hour_cos', 'minute_sin', 'minute_cos',
-            'day_sin', 'day_cos'
+            'day_sin', 'day_cos',
+            'push_notification_active',
+            'minutes_since_push',
         ]
 
         self.target_columns = ['tpm_5min', 'tpm_10min', 'tpm_15min']
@@ -51,6 +55,86 @@ class AdvancedTrafficPredictor:
         }
 
         print("✅ Predictor initialized successfully!")
+
+    def compute_tpm_thresholds_from_df(self, df):
+        """
+        Tính các ngưỡng quantile để phân loại TPM theo yêu cầu
+        và in ra phân phối số lượng bản ghi theo từng nhóm.
+
+        - 0-60%: low
+        - 60-80%: medium
+        - 80-90%: high
+        - 90-100%: very_high
+        """
+        series = df['tpm'].dropna()
+        total = int(len(series))
+        if total == 0:
+            print("⚠️ No TPM data available to compute thresholds.")
+            self.tpm_thresholds_stats = None
+            return {'q60': np.nan, 'q80': np.nan, 'q90': np.nan}
+
+        q60 = float(series.quantile(0.60))
+        q80 = float(series.quantile(0.80))
+        q90 = float(series.quantile(0.90))
+
+        thresholds = {'q60': q60, 'q80': q80, 'q90': q90}
+
+        # Phân loại theo bins dựa trên thresholds
+        labels = ['low', 'medium', 'high', 'very_high']
+        bins = [-np.inf, q60, q80, q90, np.inf]
+
+        cat = pd.cut(series, bins=bins, labels=labels, include_lowest=True, right=True)
+        counts = cat.value_counts().reindex(labels, fill_value=0).astype(int)
+        percents = (counts / total * 100).round(2)
+
+        # Range hiển thị cho từng nhóm
+        s_min = float(series.min())
+        s_max = float(series.max())
+        ranges = {
+            'low': f"[{s_min:.2f}, {q60:.2f}]",
+            'medium': f"({q60:.2f}, {q80:.2f}]",
+            'high': f"({q80:.2f}, {q90:.2f}]",
+            'very_high': f"({q90:.2f}, {s_max:.2f}]",
+        }
+
+        # Lưu stats vào class để dùng sau
+        stats = {
+            k: {'count': int(counts[k]), 'percent': float(percents[k]), 'range': ranges[k]}
+            for k in labels
+        }
+        self.tpm_thresholds_stats = {
+            'total_records': total,
+            'thresholds': thresholds,
+            'distribution': stats
+        }
+
+        # In ra tổng hợp để đánh giá
+        print("\n📊 TPM Thresholds (training-based):")
+        print(f"  - q60: {q60:.2f}, q80: {q80:.2f}, q90: {q90:.2f}")
+        print(f"  - Total training records: {total}")
+        print("  - Distribution by category:")
+        for k in labels:
+            info = stats[k]
+            print(f"    • {k:10s} | {info['count']:6d} recs "
+                  f"({info['percent']:6.2f}%) | range {info['range']}")
+
+        return thresholds
+
+    def classify_tpm_value(self, tpm, thresholds=None):
+        """
+        Phân loại một giá trị TPM theo thresholds đã lưu trong class.
+        Nếu truyền thresholds thì dùng thresholds đó; ngược lại dùng self.tpm_thresholds.
+        """
+        th = thresholds or self.tpm_thresholds
+        if th is None:
+            return 'unknown'
+        if tpm <= th['q60']:
+            return 'low'
+        if tpm <= th['q80']:
+            return 'medium'
+        if tpm <= th['q90']:
+            return 'high'
+        return 'very_high'
 
     def load_real_data(self):
         """Load data from the New Relic CSV file"""
@@ -157,6 +241,27 @@ class AdvancedTrafficPredictor:
         df['day_sin'] = np.sin(2 * np.pi * df['day_of_week'] / 7)
         df['day_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 7)
 
+        # Push-notification features (read from CSV if present, else default)
+        if 'push_notification_active' in df.columns:
+            df['push_notification_active'] = df['push_notification_active'].fillna(0).astype(int)
+        else:
+            df['push_notification_active'] = 0
+
+        if 'minutes_since_push' in df.columns:
+            df['minutes_since_push'] = df['minutes_since_push'].fillna(999999)
+            # ensure non-negative
+            df['minutes_since_push'] = df['minutes_since_push'].clip(lower=0)
+        else:
+            df['minutes_since_push'] = 999999
+
+        # Optional: a decayed strength feature to help model learn push impact
+        # Strongest right after push and decays over ~15 minutes, 0 afterward
+        df['push_effect_strength'] = np.where(
+            df['minutes_since_push'] <= 15,
+            np.exp(-df['minutes_since_push'] / 10.0),
+            0.0
+        )
+
         # Target variables (future TPM values)
         df['tpm_5min'] = df['tpm'].shift(-5)
         df['tpm_10min'] = df['tpm'].shift(-10)
@@ -188,6 +293,14 @@ class AdvancedTrafficPredictor:
 
         if final_length < 100:
             print("⚠️ Warning: Very few data points remaining after preprocessing. Consider adjusting lag features.")
+
+        # TÍNH VÀ LƯU THRESHOLDS cho phân loại từ dữ liệu huấn luyện
+        try:
+            self.tpm_thresholds = self.compute_tpm_thresholds_from_df(df)
+            print(f"✅ Stored TPM thresholds for classification: {self.tpm_thresholds}")
+        except Exception as e:
+            print(f"⚠️ Could not compute TPM thresholds: {e}")
+            self.tpm_thresholds = None
 
         return df
 
@@ -833,6 +946,8 @@ class AdvancedTrafficPredictor:
                 'minute': timestamp.minute,
                 'day_of_week': timestamp.weekday(),
                 'is_weekend': int(timestamp.weekday() >= 5),
+                'push_notification_active': 0,
+                'minutes_since_push': 999999,
             }
 
             # Add cyclic features
@@ -893,6 +1008,51 @@ class AdvancedTrafficPredictor:
         print(f"🎯 Found {len(high_periods)} high TPM periods")
         return high_periods
 
+    def demonstrate_predictions(self, df, hours_ahead=6):
+        """Demonstrate making predictions without retraining.
+        This extracts the inline demo logic from run_complete_analysis so it can be called independently.
+        """
+        # Demonstrate predictions
+        print("\n🎯 Demonstration: Predicting TPM for next 5, 10, 15 minutes...")
+
+        # Dùng thresholds từ training; nếu chưa có thì fallback tính tạm từ df truyền vào
+        thresholds = self.tpm_thresholds
+        if thresholds is None:
+            try:
+                thresholds = self.compute_tpm_thresholds_from_df(df)
+                print(f"⚠️ Using ad-hoc thresholds computed from provided df: {thresholds}")
+            except Exception as e:
+                print(f"⚠️ Could not compute thresholds from provided df: {e}")
+                thresholds = None
+
+        # Use last 60 minutes of data
+        recent_data = df.tail(60)
+        predictions = self.predict_tpm_ahead(recent_data)
+
+        current_tpm = recent_data['tpm'].iloc[-1]
+        current_class = self.classify_tpm_value(current_tpm, thresholds)
+        print(f"Current TPM: {current_tpm:.2f} ({current_class})")
+
+        for target, pred in predictions.items():
+            minutes = target.split('_')[1].replace('min', '')
+            pred_class = self.classify_tpm_value(pred, thresholds)
+            print(f"Predicted TPM in {minutes} minutes: {pred:.2f} ({pred_class})")
+
+        # Predict high TPM periods (giữ nguyên)
+        high_periods = self.predict_high_tpm_periods(df, hours_ahead=hours_ahead)
+
+        if high_periods:
+            print(f"\n🔥 Next high TPM periods (next {hours_ahead} hours):")
+            for period in high_periods[:5]:  # Show first 5
+                ph_class = self.classify_tpm_value(period['predicted_tpm'], thresholds)
+                print(f"  {period['timestamp'].strftime('%H:%M')} - "
+                      f"Predicted TPM: {period['predicted_tpm']:.0f} "
+                      f"({ph_class}, Confidence: {period['confidence']:.1f}x)")
+        else:
+            print(f"\n✅ No high TPM periods predicted in the next {hours_ahead} hours")
+
+        return {"predictions": predictions, "high_periods": high_periods}
+
     def run_complete_analysis(self):
         """Run the complete analysis pipeline"""
         print("🚀 Starting complete traffic prediction analysis with REAL DATA...")
@@ -912,38 +1072,134 @@ class AdvancedTrafficPredictor:
         print("=" * 60)
 
         self.visualize_model_performance_on_training_data(df)
-        self.plot_learning_curves(df)
+        # self.plot_learning_curves(df)
 
         # Create visualizations
         self.visualize_model_comparison()
         self.visualize_predictions(df)
 
         # Demonstrate predictions
-        print("\n🎯 Demonstration: Predicting TPM for next 5, 10, 15 minutes...")
-
-        # Use last 60 minutes of data
-        recent_data = df.tail(60)
-        predictions = self.predict_tpm_ahead(recent_data)
-
-        current_tpm = recent_data['tpm'].iloc[-1]
-        print(f"Current TPM: {current_tpm:.2f}")
-        for target, pred in predictions.items():
-            minutes = target.split('_')[1].replace('min', '')
-            print(f"Predicted TPM in {minutes} minutes: {pred:.2f}")
-
-        # Predict high TPM periods
-        high_periods = self.predict_high_tpm_periods(df, hours_ahead=6)
-
-        if high_periods:
-            print(f"\n🔥 Next high TPM periods (next 6 hours):")
-            for period in high_periods[:5]:  # Show first 5
-                print(f"  {period['timestamp'].strftime('%H:%M')} - "
-                      f"Predicted TPM: {period['predicted_tpm']:.0f} "
-                      f"(Confidence: {period['confidence']:.1f}x)")
-        else:
-            print("\n✅ No high TPM periods predicted in the next 6 hours")
+        self.demonstrate_predictions(df, hours_ahead=6)
 
         print("\n🎉 Analysis complete with REAL NEW RELIC DATA!")
+
+    def predict_from_inputs(self,
+                            when: datetime,
+                            current_tpm: float,
+                            previous_tpms: list = None,
+                            response_time: float = None,
+                            push_notification_active: int = 0,
+                            minutes_since_push: int = 999999,
+                            minutes_ahead=(5, 10, 15),
+                            extra_features: dict = None):
+        """
+        Predict TPM for specific future horizons given a point-in-time context.
+
+        Parameters:
+        - when: datetime (timezone-aware hoặc naive nhưng nên là local consistent)
+        - current_tpm: TPM tại thời điểm 'when'
+        - previous_tpms: danh sách TPM quá khứ, phần tử 0 là tpm ở 1 phút trước (nếu model train theo phút)
+        - response_time: response time hiện tại (nếu model sử dụng)
+        - push_notification_active: 0/1 flag tại thời điểm 'when'
+        - minutes_since_push: số phút kể từ lần push gần nhất (0 nếu vừa push)
+        - minutes_ahead: các chân trời dự báo (tuple/list)
+        - extra_features: dict các feature bổ sung nếu model có (ví dụ ml_weight, ...)
+
+        Returns:
+        - dict: { 'tpm_5min': value, 'tpm_10min': value, 'tpm_15min': value }
+        """
+        if not self.models or not self.best_models:
+            raise ValueError("Models are not loaded/trained.")
+
+        # Chuẩn bị đặc trưng thời gian
+        hour = when.hour
+        minute = when.minute
+        day_of_week = when.weekday()
+        is_weekend = int(day_of_week >= 5)
+
+        # Circular encodings
+        hour_sin = np.sin(2 * np.pi * hour / 24)
+        hour_cos = np.cos(2 * np.pi * hour / 24)
+        minute_sin = np.sin(2 * np.pi * minute / 60)
+        minute_cos = np.cos(2 * np.pi * minute / 60)
+        day_sin = np.sin(2 * np.pi * day_of_week / 7)
+        day_cos = np.cos(2 * np.pi * day_of_week / 7)
+
+        # Base feature dict
+        row = {
+            'tpm': current_tpm,
+            'hour': hour,
+            'minute': minute,
+            'day_of_week': day_of_week,
+            'is_weekend': is_weekend,
+            'hour_sin': hour_sin,
+            'hour_cos': hour_cos,
+            'minute_sin': minute_sin,
+            'minute_cos': minute_cos,
+            'day_sin': day_sin,
+            'day_cos': day_cos,
+            'push_notification_active': push_notification_active,
+            'minutes_since_push': minutes_since_push
+        }
+
+        if response_time is not None:
+            row['response_time'] = response_time
+
+        # Map các lag từ previous_tpms nếu model có cột tpm_lag_k
+        # Giả định previous_tpms[0] là 1 phút trước, [1]: 2 phút trước, ...
+        if previous_tpms:
+            max_lags = max(
+                [int(col.split('_')[-1]) for col in self.feature_columns if col.startswith('tpm_lag_')],
+                default=0
+            )
+            for k in range(1, max_lags + 1):
+                val = previous_tpms[k - 1] if len(previous_tpms) >= k else current_tpm
+                row[f'tpm_lag_{k}'] = val
+        else:
+            # fallback: dùng current_tpm
+            for col in self.feature_columns:
+                if col.startswith('tpm_lag_'):
+                    row[col] = current_tpm
+
+        # Một số rolling có thể không tính được từ input ngắn → cho 0 hoặc current_tpm
+        for col in self.feature_columns:
+            if 'rolling' in col or col.startswith('tpm_ma_') or col.startswith('tpm_std_'):
+                row[col] = row.get(col, current_tpm if 'ma' in col else 0.0)
+
+        # Extra features
+        if extra_features:
+            row.update(extra_features)
+
+        # Tạo DataFrame theo đúng thứ tự feature_columns, điền 0 nếu thiếu
+        feature_vector = pd.DataFrame(
+            [{col: row.get(col, 0) for col in self.feature_columns}]
+        )
+
+        # Dự báo
+        predictions = {}
+        for minutes in minutes_ahead:
+            target = f'tpm_{minutes}min'
+            if target not in self.best_models:
+                continue
+            best_model_name = self.best_models[target]
+            model = self.models[target][best_model_name]
+            if best_model_name == 'SVR' and target in self.scalers:
+                X_scaled = self.scalers[target].transform(feature_vector)
+                pred = model.predict(X_scaled)[0]
+            else:
+                pred = model.predict(feature_vector)[0]
+            predictions[target] = float(max(0.0, pred))  # đảm bảo không âm
+
+            # Phân loại theo thresholds giống demonstrate_predictions
+        thresholds = self.tpm_thresholds  # có thể là None nếu chưa train trong session này
+        labels = {k: self.classify_tpm_value(v, thresholds) for k, v in predictions.items()}
+
+        # Trả về cả giá trị và nhãn để tương thích ngược và dễ debug
+        return {
+            'predictions': predictions,
+            'labels': labels,
+            'thresholds': thresholds
+        }
 
 
 def main():
