@@ -54,6 +54,47 @@ class AdvancedTrafficPredictor:
             'SVR': SVR(kernel='rbf', C=100, gamma=0.1)
         }
 
+        # Python
+        # self.algorithms = {
+        #     'RandomForest': RandomForestRegressor(
+        #         n_estimators=500,
+        #         max_depth=16,
+        #         min_samples_leaf=4,
+        #         min_samples_split=8,
+        #         max_features='sqrt',
+        #         bootstrap=True,
+        #         oob_score=True,
+        #         random_state=42,
+        #         n_jobs=-1
+        #     ),
+        #     'GradientBoosting': GradientBoostingRegressor(
+        #         loss='huber',  # hoặc 'absolute_error'
+        #         alpha=0.9,  # chỉ dùng khi loss='huber' hoặc 'quantile'
+        #         learning_rate=0.05,
+        #         n_estimators=600,
+        #         max_depth=3,
+        #         subsample=0.8,
+        #         max_features=None,
+        #         min_samples_leaf=10,
+        #         random_state=42,
+        #         validation_fraction=0.1,
+        #         n_iter_no_change=20,
+        #         tol=1e-4
+        #     ),
+        #     'LinearRegression': LinearRegression(
+        #         fit_intercept=True
+        #     ),
+        #     'SVR': SVR(
+        #         kernel='rbf',
+        #         C=10.0,  # bắt đầu nhỏ hơn, rồi tune
+        #         gamma='scale',  # để thích nghi theo variance của dữ liệu đã scale
+        #         epsilon=0.2
+        #     ),
+        #     # (Tùy chọn) Thêm vài mô hình robust/regularized để so sánh:
+        #     # 'Ridge': Ridge(alpha=1.0, random_state=42),
+        #     # 'Huber': HuberRegressor(epsilon=1.5, alpha=1e-3)
+        # }
+
         print("✅ Predictor initialized successfully!")
 
     def compute_tpm_thresholds_from_df(self, df):
@@ -1094,19 +1135,8 @@ class AdvancedTrafficPredictor:
                             extra_features: dict = None):
         """
         Predict TPM for specific future horizons given a point-in-time context.
-
-        Parameters:
-        - when: datetime (timezone-aware hoặc naive nhưng nên là local consistent)
-        - current_tpm: TPM tại thời điểm 'when'
-        - previous_tpms: danh sách TPM quá khứ, phần tử 0 là tpm ở 1 phút trước (nếu model train theo phút)
-        - response_time: response time hiện tại (nếu model sử dụng)
-        - push_notification_active: 0/1 flag tại thời điểm 'when'
-        - minutes_since_push: số phút kể từ lần push gần nhất (0 nếu vừa push)
-        - minutes_ahead: các chân trời dự báo (tuple/list)
-        - extra_features: dict các feature bổ sung nếu model có (ví dụ ml_weight, ...)
-
         Returns:
-        - dict: { 'tpm_5min': value, 'tpm_10min': value, 'tpm_15min': value }
+        - dict: { 'predictions': {...}, 'labels': {...}, 'thresholds': {... or None} }
         """
         if not self.models or not self.best_models:
             raise ValueError("Models are not loaded/trained.")
@@ -1125,8 +1155,9 @@ class AdvancedTrafficPredictor:
         day_sin = np.sin(2 * np.pi * day_of_week / 7)
         day_cos = np.cos(2 * np.pi * day_of_week / 7)
 
-        # Base feature dict
-        row = {
+        # Base feature dict (chỉ set những cột thực sự có trong feature_columns)
+        row = {}
+        base_vals = {
             'tpm': current_tpm,
             'hour': hour,
             'minute': minute,
@@ -1138,42 +1169,87 @@ class AdvancedTrafficPredictor:
             'minute_cos': minute_cos,
             'day_sin': day_sin,
             'day_cos': day_cos,
-            'push_notification_active': push_notification_active,
-            'minutes_since_push': minutes_since_push
+            'push_notification_active': int(push_notification_active),
         }
 
-        if response_time is not None:
-            row['response_time'] = response_time
+        # Giới hạn minutes_since_push về khoảng hợp lý (nhất quán training)
+        # Nếu > 15 phút thì push_effect_strength ~ 0
+        ms_push = max(0, int(minutes_since_push))
+        ms_push = min(ms_push, 10_000)  # tránh quá xa phân phối training
+        base_vals['minutes_since_push'] = ms_push
 
-        # Map các lag từ previous_tpms nếu model có cột tpm_lag_k
-        # Giả định previous_tpms[0] là 1 phút trước, [1]: 2 phút trước, ...
-        if previous_tpms:
-            max_lags = max(
-                [int(col.split('_')[-1]) for col in self.feature_columns if col.startswith('tpm_lag_')],
-                default=0
-            )
-            for k in range(1, max_lags + 1):
-                val = previous_tpms[k - 1] if len(previous_tpms) >= k else current_tpm
-                row[f'tpm_lag_{k}'] = val
-        else:
-            # fallback: dùng current_tpm
-            for col in self.feature_columns:
-                if col.startswith('tpm_lag_'):
-                    row[col] = current_tpm
+        # Gắn các base feature nếu có trong danh sách features của model
+        for k, v in base_vals.items():
+            if k in self.feature_columns:
+                row[k] = v
 
-        # Một số rolling có thể không tính được từ input ngắn → cho 0 hoặc current_tpm
-        for col in self.feature_columns:
-            if 'rolling' in col or col.startswith('tpm_ma_') or col.startswith('tpm_std_'):
-                row[col] = row.get(col, current_tpm if 'ma' in col else 0.0)
+        if response_time is not None and 'response_time' in self.feature_columns:
+            row['response_time'] = float(response_time)
 
-        # Extra features
+        # Tính các lag/rolling từ previous_tpms + current_tpm để sát logic training
+        # previous_tpms[0] = 1 phút trước → tạo chuỗi thời gian theo thứ tự cũ→mới
+        hist = []
+        if previous_tpms and len(previous_tpms) > 0:
+            # previous_tpms: [1min_ago, 2min_ago, ...] → đảo để thành thời gian tăng dần
+            hist = list(reversed(previous_tpms))
+        hist = hist + [current_tpm]  # thêm điểm hiện tại
+
+        # Map các lag nếu có cột tpm_lag_k
+        # Với k phút trước: lấy từ previous_tpms[k-1] nếu có, else fallback current_tpm
+        max_lag = max([int(c.split('_')[-1]) for c in self.feature_columns if c.startswith('tpm_lag_')], default=0)
+        if max_lag > 0:
+            for k in range(1, max_lag + 1):
+                col = f'tpm_lag_{k}'
+                if col in self.feature_columns:
+                    val = previous_tpms[k - 1] if previous_tpms and len(previous_tpms) >= k else current_tpm
+                    row[col] = float(val)
+
+        # Tính rolling mean/std theo các cửa sổ có trong feature_columns từ chuỗi hist
+        # Giống training: min_periods=1
+        def rolling_mean(values, window):
+            if len(values) == 0:
+                return float(current_tpm)
+            w = min(window, len(values))
+            return float(np.mean(values[-w:]))
+
+        def rolling_std(values, window):
+            if len(values) <= 1:
+                return 0.0
+            w = min(window, len(values))
+            return float(np.std(values[-w:], ddof=0))
+
+        rolling_windows = {
+            'tpm_rolling_mean_3': 3,
+            'tpm_rolling_mean_5': 5,
+            'tpm_rolling_mean_15': 15,
+            'tpm_rolling_mean_30': 30,
+            'tpm_rolling_std_3': 3,
+            'tpm_rolling_std_5': 5,
+            'tpm_rolling_std_15': 15,
+            'tpm_rolling_std_30': 30,
+            # Hỗ trợ các alias nếu training dùng 'tpm_ma_*' hoặc 'tpm_std_*'
+            'tpm_ma_3': 3, 'tpm_ma_5': 5, 'tpm_ma_15': 15, 'tpm_ma_30': 30,
+            'tpm_std_3': 3, 'tpm_std_5': 5, 'tpm_std_15': 15, 'tpm_std_30': 30,
+        }
+        for col, win in rolling_windows.items():
+            if col in self.feature_columns:
+                if 'mean' in col or '_ma_' in col:
+                    row[col] = rolling_mean(hist, win)
+                elif 'std' in col:
+                    row[col] = rolling_std(hist, win)
+
+        # push_effect_strength nếu có trong feature_columns
+        if 'push_effect_strength' in self.feature_columns:
+            row['push_effect_strength'] = float(np.exp(-ms_push / 10.0)) if ms_push <= 15 else 0.0
+
+        # Thêm extra features nếu có và nằm trong feature_columns
         if extra_features:
-            row.update(extra_features)
+            for k, v in extra_features.items():
+                if k in self.feature_columns:
+                    row[k] = v
 
         # Tạo DataFrame theo đúng thứ tự feature_columns, điền 0 nếu thiếu
-        feature_vector = pd.DataFrame(
-            [{col: row.get(col, 0) for col in self.feature_columns}]
-        )
+        feature_vector = pd.DataFrame([{col: row.get(col, 0) for col in self.feature_columns}])
 
         # Dự báo
         predictions = {}
@@ -1190,11 +1266,10 @@ class AdvancedTrafficPredictor:
                 pred = model.predict(feature_vector)[0]
             predictions[target] = float(max(0.0, pred))  # đảm bảo không âm
 
-            # Phân loại theo thresholds giống demonstrate_predictions
-        thresholds = self.tpm_thresholds  # có thể là None nếu chưa train trong session này
+        # Phân loại theo thresholds
+        thresholds = self.tpm_thresholds
         labels = {k: self.classify_tpm_value(v, thresholds) for k, v in predictions.items()}
 
-        # Trả về cả giá trị và nhãn để tương thích ngược và dễ debug
         return {
             'predictions': predictions,
             'labels': labels,

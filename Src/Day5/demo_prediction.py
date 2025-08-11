@@ -3,6 +3,7 @@ import sys
 import argparse
 import glob
 import joblib
+import numpy as np
 from datetime import datetime
 import pytz
 
@@ -119,11 +120,26 @@ def load_models_into_predictor(predictor: AdvancedTrafficPredictor, models_dir: 
     predictor.best_models = best_models
     predictor.model_performance = metadata.get('model_performance', {})
 
+    # Load thresholds from metadata if available
+    predictor.tpm_thresholds = metadata.get('tpm_thresholds') or metadata.get('thresholds')
+    predictor.tpm_thresholds_stats = metadata.get('tpm_thresholds_stats')
+
     # If feature/target columns differ, update to match saved artifacts
     if feature_columns:
         predictor.feature_columns = feature_columns
     if target_columns:
         predictor.target_columns = target_columns
+
+    # Thông tin tổng quan trước khi load từng model
+    print("\n🧠 Model Summary")
+    print(f"   • Timestamp: {timestamp}")
+    print(f"   • Models dir: {models_dir}")
+    print(f"   • #Features: {len(predictor.feature_columns) if predictor.feature_columns else 0}")
+    if predictor.feature_columns:
+        print(f"   • Feature columns: {predictor.feature_columns}")
+    print(f"   • #Targets: {len(predictor.target_columns) if predictor.target_columns else 0}")
+    if predictor.target_columns:
+        print(f"   • Target columns: {predictor.target_columns}")
 
     # Load best model per target and its scaler
     for target, best_name in best_models.items():
@@ -131,16 +147,57 @@ def load_models_into_predictor(predictor: AdvancedTrafficPredictor, models_dir: 
         if not os.path.exists(model_path):
             print(f"❌ Missing model file: {model_path}")
             return False
-        predictor.models[target][best_name] = joblib.load(model_path)
+        model_obj = joblib.load(model_path)
+        predictor.models[target][best_name] = model_obj
 
         # Load scaler for the target (always saved, used particularly for SVR)
         scaler_path = os.path.join(models_dir, f'scaler_{target}_{timestamp}.joblib')
+        scaler_loaded = False
         if not os.path.exists(scaler_path):
             print(f"⚠️ Scaler not found for {target}: {scaler_path}. Proceeding without scaler.")
         else:
             predictor.scalers[target] = joblib.load(scaler_path)
+            scaler_loaded = True
 
-    print(f"✅ Loaded models and metadata from timestamp {timestamp}")
+        # In thêm thông tin chi tiết cho từng target/model
+        model_class = type(model_obj).__name__
+        print(f"\n   ➤ Target: {target}")
+        print(f"     - Best model key: {best_name}")
+        print(f"     - Estimator class: {model_class}")
+        print(f"     - Model file: {os.path.basename(model_path)}")
+        print(f"     - Scaler: {'loaded' if scaler_loaded else 'not found'}")
+
+        # Thông tin hiệu năng (nếu có trong metadata.model_performance)
+        perf_info = predictor.model_performance.get(target, {})
+        best_perf = perf_info.get(best_name)
+        if isinstance(best_perf, dict) and best_perf:
+            metrics_str = ", ".join(f"{k}: {v:.4f}" if isinstance(v, (int, float)) else f"{k}: {v}"
+                                    for k, v in best_perf.items())
+            print(f"     - Performance: {metrics_str}")
+        elif perf_info:
+            print(f"     - Performance (raw): {perf_info}")
+
+    # Nếu thresholds chưa có, thử tính từ training CSV
+    if predictor.tpm_thresholds is None:
+        try:
+            if predictor.data_file_path and os.path.exists(predictor.data_file_path):
+                df_train = predictor.load_real_data()
+                predictor.tpm_thresholds = predictor.compute_tpm_thresholds_from_df(df_train)
+                print(f"🧮 Computed thresholds from training CSV: {predictor.tpm_thresholds}")
+            else:
+                print("⚠️ No thresholds in metadata and training CSV not found; labels may be 'unknown'.")
+        except Exception as e:
+            print(f"⚠️ Failed to compute thresholds from training CSV: {e}")
+
+    # Tóm tắt thresholds
+    if predictor.tpm_thresholds:
+        th = predictor.tpm_thresholds
+        try:
+            print(f"   • Thresholds: q60={th['q60']:.2f}, q80={th['q80']:.2f}, q90={th['q90']:.2f}")
+        except Exception:
+            print(f"   • Thresholds: {th}")
+
+    print(f"\n✅ Loaded models and metadata from timestamp {timestamp}")
     return True
 
 
@@ -181,6 +238,20 @@ def main():
             print("❌ No live data fetched and no dataset fallback provided. Aborting.")
             sys.exit(1)
     else:
+        # Giả lập push vừa diễn ra tại thời điểm cuối cùng trong live_df
+        # push_time = live_df['timestamp'].max()
+        # window_mins = 15  # độ dài khoảng thời gian "active"
+        #
+        # # Tính phút kể từ push (âm trước push, >=0 sau push)
+        # delta_min = (live_df['timestamp'] - push_time).dt.total_seconds() / 60.0
+        #
+        # live_df['minutes_since_push'] = delta_min.where(delta_min >= 0, other=np.nan)
+        # # Active trong 15 phút sau push
+        # live_df['push_notification_active'] = ((delta_min >= 0) & (delta_min <= window_mins)).astype(int)
+        #
+        # # Điền giá trị mặc định cho các dòng trước push
+        # live_df['minutes_since_push'] = live_df['minutes_since_push'].fillna(999999)
+
         # Create features from live data for prediction (keep latest rows even if some targets are NaN)
         df = predictor.create_features(live_df)
 
@@ -198,21 +269,21 @@ def main():
 def main2():
     # Lấy ngày hôm nay 09:00 tại GMT+7
     tz = pytz.timezone('Asia/Bangkok')
-    date_str = '2025-08-15 09:00'
+    date_str = '2025-08-10 15:30'
     naive_dt = datetime.strptime(date_str, '%Y-%m-%d %H:%M')
     test_when = tz.localize(naive_dt)
 
     # Giá trị mẫu để test
-    current_tpm = 200.0
-    previous_tpms = [190.0, 100.0, 123.0, 124.0, 130.0]  # 1→5 phút trước
+    current_tpm = 125.0
+    previous_tpms = [120.0, 100.0, 123.0, 124.0, 135.0,120.0, 100.0, 123.0, 124.0, 135.0,120.0, 100.0, 123.0, 124.0, 135.0]  # 1→5 phút trước
     response_time = 120.0
 
     # Mô phỏng vừa push lúc 09:00
-    push_notification_active = 1
-    minutes_since_push = 0
+    push_notification_active = 0
+    minutes_since_push = 3000
 
     print("\n🧪 Testing predict_from_inputs at 09:00 GMT+7 ...")
-    preds = predict_from_inputs(
+    result = predict_from_inputs(
         when=test_when,
         current_tpm=current_tpm,
         previous_tpms=previous_tpms,
@@ -222,7 +293,17 @@ def main2():
         minutes_ahead=(5, 10, 15),
         # models_dir=None, timestamp=None  # dùng mặc định: lấy model mới nhất từ thư mục models
     )
-    print(f"🧪 Predictions at {test_when.strftime('%Y-%m-%d %H:%M %Z')}: {preds}")
+    preds = result.get('predictions', {})
+    labels = result.get('labels', {})
+
+    print(f"🧪 Predictions at {test_when.strftime('%Y-%m-%d %H:%M %Z')}:")
+    for key in sorted(preds.keys(), key=lambda k: int(k.split('_')[1].replace('min', ''))):
+        minutes = key.split('_')[1].replace('min', '')
+        value = preds[key]
+        label = labels.get(key, 'unknown')
+        print(f"  • t+{minutes}m: {value:.2f} ({label})")
+
 
 if __name__ == '__main__':
-    main2()
+    # main2()
+    main()
