@@ -269,7 +269,7 @@ def main():
 def main2():
     # Lấy ngày hôm nay 09:00 tại GMT+7
     tz = pytz.timezone('Asia/Bangkok')
-    date_str = '2025-08-10 15:30'
+    date_str = '2025-08-10 03:30'
     naive_dt = datetime.strptime(date_str, '%Y-%m-%d %H:%M')
     test_when = tz.localize(naive_dt)
 

@@ -47,53 +47,53 @@ class AdvancedTrafficPredictor:
         self.target_columns = ['tpm_5min', 'tpm_10min', 'tpm_15min']
 
         # Model algorithms to try
-        self.algorithms = {
-            'RandomForest': RandomForestRegressor(n_estimators=100, random_state=42),
-            'GradientBoosting': GradientBoostingRegressor(n_estimators=100, random_state=42),
-            'LinearRegression': LinearRegression(),
-            'SVR': SVR(kernel='rbf', C=100, gamma=0.1)
-        }
+        # self.algorithms = {
+        #     'RandomForest': RandomForestRegressor(n_estimators=100, random_state=42),
+        #     'GradientBoosting': GradientBoostingRegressor(n_estimators=100, random_state=42),
+        #     'LinearRegression': LinearRegression(),
+        #     'SVR': SVR(kernel='rbf', C=100, gamma=0.1)
+        # }
 
         # Python
-        # self.algorithms = {
-        #     'RandomForest': RandomForestRegressor(
-        #         n_estimators=500,
-        #         max_depth=16,
-        #         min_samples_leaf=4,
-        #         min_samples_split=8,
-        #         max_features='sqrt',
-        #         bootstrap=True,
-        #         oob_score=True,
-        #         random_state=42,
-        #         n_jobs=-1
-        #     ),
-        #     'GradientBoosting': GradientBoostingRegressor(
-        #         loss='huber',  # hoặc 'absolute_error'
-        #         alpha=0.9,  # chỉ dùng khi loss='huber' hoặc 'quantile'
-        #         learning_rate=0.05,
-        #         n_estimators=600,
-        #         max_depth=3,
-        #         subsample=0.8,
-        #         max_features=None,
-        #         min_samples_leaf=10,
-        #         random_state=42,
-        #         validation_fraction=0.1,
-        #         n_iter_no_change=20,
-        #         tol=1e-4
-        #     ),
-        #     'LinearRegression': LinearRegression(
-        #         fit_intercept=True
-        #     ),
-        #     'SVR': SVR(
-        #         kernel='rbf',
-        #         C=10.0,  # bắt đầu nhỏ hơn, rồi tune
-        #         gamma='scale',  # để thích nghi theo variance của dữ liệu đã scale
-        #         epsilon=0.2
-        #     ),
-        #     # (Tùy chọn) Thêm vài mô hình robust/regularized để so sánh:
-        #     # 'Ridge': Ridge(alpha=1.0, random_state=42),
-        #     # 'Huber': HuberRegressor(epsilon=1.5, alpha=1e-3)
-        # }
+        self.algorithms = {
+            'RandomForest': RandomForestRegressor(
+                n_estimators=500,
+                max_depth=16,
+                min_samples_leaf=4,
+                min_samples_split=8,
+                max_features='sqrt',
+                bootstrap=True,
+                oob_score=True,
+                random_state=42,
+                n_jobs=-1
+            ),
+            'GradientBoosting': GradientBoostingRegressor(
+                loss='huber',  # hoặc 'absolute_error'
+                alpha=0.9,  # chỉ dùng khi loss='huber' hoặc 'quantile'
+                learning_rate=0.05,
+                n_estimators=600,
+                max_depth=3,
+                subsample=0.8,
+                max_features=None,
+                min_samples_leaf=10,
+                random_state=42,
+                validation_fraction=0.1,
+                n_iter_no_change=20,
+                tol=1e-4
+            ),
+            'LinearRegression': LinearRegression(
+                fit_intercept=True
+            ),
+            'SVR': SVR(
+                kernel='rbf',
+                C=10.0,  # bắt đầu nhỏ hơn, rồi tune
+                gamma='scale',  # để thích nghi theo variance của dữ liệu đã scale
+                epsilon=0.2
+            ),
+            # (Tùy chọn) Thêm vài mô hình robust/regularized để so sánh:
+            # 'Ridge': Ridge(alpha=1.0, random_state=42),
+            # 'Huber': HuberRegressor(epsilon=1.5, alpha=1e-3)
+        }
 
         print("✅ Predictor initialized successfully!")
 
@@ -1080,19 +1080,19 @@ class AdvancedTrafficPredictor:
             print(f"Predicted TPM in {minutes} minutes: {pred:.2f} ({pred_class})")
 
         # Predict high TPM periods (giữ nguyên)
-        high_periods = self.predict_high_tpm_periods(df, hours_ahead=hours_ahead)
+        # high_periods = self.predict_high_tpm_periods(df, hours_ahead=hours_ahead)
 
-        if high_periods:
-            print(f"\n🔥 Next high TPM periods (next {hours_ahead} hours):")
-            for period in high_periods[:5]:  # Show first 5
-                ph_class = self.classify_tpm_value(period['predicted_tpm'], thresholds)
-                print(f"  {period['timestamp'].strftime('%H:%M')} - "
-                      f"Predicted TPM: {period['predicted_tpm']:.0f} "
-                      f"({ph_class}, Confidence: {period['confidence']:.1f}x)")
-        else:
-            print(f"\n✅ No high TPM periods predicted in the next {hours_ahead} hours")
-
-        return {"predictions": predictions, "high_periods": high_periods}
+        # if high_periods:
+        #     print(f"\n🔥 Next high TPM periods (next {hours_ahead} hours):")
+        #     for period in high_periods[:5]:  # Show first 5
+        #         ph_class = self.classify_tpm_value(period['predicted_tpm'], thresholds)
+        #         print(f"  {period['timestamp'].strftime('%H:%M')} - "
+        #               f"Predicted TPM: {period['predicted_tpm']:.0f} "
+        #               f"({ph_class}, Confidence: {period['confidence']:.1f}x)")
+        # else:
+        #     print(f"\n✅ No high TPM periods predicted in the next {hours_ahead} hours")
+        #
+        # return {"predictions": predictions, "high_periods": high_periods}
 
     def run_complete_analysis(self):
         """Run the complete analysis pipeline"""
@@ -1113,7 +1113,7 @@ class AdvancedTrafficPredictor:
         print("=" * 60)
 
         self.visualize_model_performance_on_training_data(df)
-        # self.plot_learning_curves(df)
+        self.plot_learning_curves(df)
 
         # Create visualizations
         self.visualize_model_comparison()

@@ -122,3 +122,43 @@ Cách điều chỉnh thực tế:
 - Nếu thấy overfit: giảm max_depth, tăng min_samples_leaf, giảm max_features (ví dụ 'sqrt' hoặc 0.6), giảm learning_rate và tăng n_estimators, giảm subsample một chút (0.7–0.8), giữ loss='huber' và có thể tăng alpha (0.9→0.95).
 - Nếu underfit: tăng n_estimators, tăng max_depth (3→4), giảm min_samples_leaf (10→5), tăng max_features, tăng nhẹ learning_rate (0.05→0.07), tăng subsample (0.8→0.9).
 - Dữ liệu có nhiều spike/outlier: dùng loss='huber' hoặc 'absolute_error'; giữ learning_rate thấp; min_samples_leaf cao hơn; subsample < 1; alpha ~ 0.9–0.95.
+
+=======================
+Ý nghĩa và mục đích của hàm vẽ learning_curves
+
+Mục đích
+- Đánh giá khả năng học của “best model” cho từng mục tiêu dự báo (tpm_5min, tpm_10min, tpm_15min) theo kích thước dữ liệu huấn luyện.
+- Chẩn đoán nhanh mô hình đang overfit hay underfit để quyết định điều chỉnh siêu tham số hoặc dữ liệu.
+
+Hàm làm gì
+- Chuẩn bị dữ liệu:
+  - X: các feature trong feature_columns, điền thiếu bằng 0.
+  - y: cột target tương ứng, nếu thiếu sẽ fallback về cột tpm.
+- Chọn mô hình tốt nhất cho từng target từ best_models.
+  - Nếu là SVR, chuẩn hóa X bằng scaler phù hợp trước khi vẽ.
+- Tính learning curve:
+  - Dùng sklearn.learning_curve với 5-fold CV, thước đo R², train_sizes từ 10% đến 100% (10 mốc).
+  - Lấy trung bình và độ lệch chuẩn của điểm số train và validation.
+- Vẽ biểu đồ:
+  - Đường màu xanh: điểm số trên tập huấn luyện (training score) theo kích thước dữ liệu.
+  - Đường màu đỏ: điểm số cross-validation (validation score) theo kích thước dữ liệu.
+  - Vùng mờ là ±1 std cho mỗi đường, thể hiện độ ổn định giữa các fold.
+- Lưu ảnh ra charts/learning_curves_real_data_<timestamp>.png và hiển thị.
+
+Cách diễn giải
+- Underfitting (bias cao):
+  - Cả training và validation score đều thấp và hội tụ gần nhau khi tăng dữ liệu.
+  - Hướng xử lý: tăng độ phức tạp mô hình (max_depth cao hơn, nhiều estimators hơn), thêm/đổi feature, tăng learning_rate (với GB) vừa phải, giảm regularization.
+- Overfitting (variance cao):
+  - Training score cao nhưng validation score thấp; khoảng cách giữa hai đường lớn, ít thu hẹp khi tăng dữ liệu.
+  - Hướng xử lý: tăng regularization/giảm độ phức tạp (GB: giảm max_depth, tăng min_samples_leaf, giảm max_features, giảm learning_rate và tăng n_estimators); dùng subsample < 1; thêm dữ liệu/augmentation; loại outlier hoặc dùng loss robust.
+- Dư liệu chưa đủ:
+  - Validation score cải thiện rõ khi tăng train_size và khoảng cách với training score thu hẹp.
+  - Hướng xử lý: thu thập thêm dữ liệu, hoặc dùng kỹ thuật giảm variance (subsample, regularization).
+- R² âm hoặc dao động mạnh:
+  - Mô hình kém trên CV hoặc không ổn định theo fold.
+  - Hướng xử lý: xem lại pipeline feature (lag/rolling có rò rỉ?), scale (với SVR), chất lượng nhãn, phân phối outlier (cân nhắc loss='huber' hoặc robust scaler).
+
+Vì sao quan trọng
+- Cho thấy mối quan hệ “độ phức tạp mô hình – lượng dữ liệu – hiệu năng”, giúp chọn đúng hướng tối ưu: tăng dữ liệu hay tinh chỉnh siêu tham số/đặc trưng.
+- Tránh tối ưu mù quáng; bạn thấy được khi nào mô hình đạt “điểm bão hòa” và khi nào cần đổi kiến trúc/đặc trưng.
