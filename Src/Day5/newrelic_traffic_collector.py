@@ -287,10 +287,10 @@ def process_newrelic_data_with_enhanced_metadata(data):
         minute = ts_gmt7.minute
 
         # Xác định lần push gần nhất
-        if hour > 12 or (hour == 12 and minute >= 0):
+        if hour > 8 or (hour == 8 and minute >= 0):
             # Sau hoặc đúng 12:00 hôm nay -> lần push gần nhất là 12:00 hôm nay
             last_push_date = ts_gmt7.date()
-            last_push_time = dtime(12, 0)
+            last_push_time = dtime(8, 0)
         elif hour > 3 or (hour == 3 and minute >= 0):
             # Từ 03:00 đến trước 12:00 -> lần push gần nhất là 03:00 hôm nay
             last_push_date = ts_gmt7.date()
@@ -298,7 +298,7 @@ def process_newrelic_data_with_enhanced_metadata(data):
         else:
             # Trước 03:00 -> lần push gần nhất là 12:00 ngày hôm qua
             last_push_date = (ts_gmt7 - timedelta(days=1)).date()
-            last_push_time = dtime(12, 0)
+            last_push_time = dtime(8, 0)
 
         # Tạo datetime tz-aware tại GMT+7 cho last push
         last_push_dt = df.loc[0, 'timestamp'].tz  # lấy tzinfo GMT+7 sẵn có

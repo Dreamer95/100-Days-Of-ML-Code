@@ -1,29 +1,29 @@
 Recent-Focused Weekend Traffic Data Collection Summary
 ====================================================
 
-Collection Date: 2025-08-10 17:12:36
+Collection Date: 2025-09-03 10:54:01
 Collection Strategy: RECENT-FOCUSED with New Relic granularity optimization
 Focus Period: Last 8 days (data_age <= 8) with 1-2 minute intervals
-Total Records: 4,930
-Time Range: 2025-05-22 23:50:00+07:00 to 2025-08-10 11:49:00+07:00
+Total Records: 4,420
+Time Range: 2025-06-12 23:50:00+07:00 to 2025-08-31 11:49:00+07:00
 Weeks Collected: 12
 Total Periods: 50
 Successful Collections: 50
 
 Data Age Distribution:
-  Recent (≤8 days): 3,600 records (73.0%)
-  Medium (8-14 days): 610 records (12.4%)
-  Historical (>14 days): 720 records (14.6%)
+  Recent (≤8 days): 3,600 records (81.4%)
+  Medium (8-14 days): 100 records (2.3%)
+  Historical (>14 days): 720 records (16.3%)
 
 High-Resolution Data:
-  Fine granularity (≤5min): 4,140 records (84.0%)
-  Ultra-fine (≤2min): 4,140 records (84.0%)
+  Fine granularity (≤5min): 3,600 records (81.4%)
+  Ultra-fine (≤2min): 3,600 records (81.4%)
 
 Collection Strategy Distribution:
-  1min_granularity: 3,600 records (73.0%)
-  10_evenly_spaced_points: 1,330 records (27.0%)
+  1min_granularity: 3,600 records (81.4%)
+  10_evenly_spaced_points: 820 records (18.6%)
 
 ML Training Quality Metrics:
-  Premium data (weight ≥ 8): 4,498 records
+  Premium data (weight ≥ 8): 3,988 records
   Average ML weight: 11.97
-  Recent data percentage: 73.0%
+  Recent data percentage: 81.4%

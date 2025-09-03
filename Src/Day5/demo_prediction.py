@@ -269,7 +269,7 @@ def main():
 def main2():
     # Lấy ngày hôm nay 09:00 tại GMT+7
     tz = pytz.timezone('Asia/Bangkok')
-    date_str = '2025-08-10 03:30'
+    date_str = '2025-08-23 23:30'
     naive_dt = datetime.strptime(date_str, '%Y-%m-%d %H:%M')
     test_when = tz.localize(naive_dt)
 
@@ -280,7 +280,16 @@ def main2():
 
     # Mô phỏng vừa push lúc 09:00
     push_notification_active = 0
-    minutes_since_push = 3000
+    minutes_since_push = 1000
+
+    # # Giá trị mẫu để test
+    # current_tpm = 325.0
+    # previous_tpms = [220.0, 300.0, 223.0, 124.0, 135.0,120.0, 100.0, 123.0, 124.0, 135.0,120.0, 100.0, 123.0, 124.0, 135.0]  # 1→5 phút trước
+    # response_time = 120.0
+    #
+    # # Mô phỏng vừa push lúc 09:00
+    # push_notification_active = 1
+    # minutes_since_push = 0
 
     print("\n🧪 Testing predict_from_inputs at 09:00 GMT+7 ...")
     result = predict_from_inputs(

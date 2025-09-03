@@ -4,7 +4,7 @@ def main():
     print("\n🎨 Creating traffic visualizations...")
     create_traffic_visualization_suite_enhanced(
         start_date='2025-05-01',
-        end_date='2025-08-10'
+        end_date='2025-08-30'
     )
 
 if __name__ == "__main__":

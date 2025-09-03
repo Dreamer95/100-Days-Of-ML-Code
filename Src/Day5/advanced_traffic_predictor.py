@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, HistGradientBoostingRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.svm import SVR
 from sklearn.preprocessing import StandardScaler
@@ -30,7 +30,7 @@ class AdvancedTrafficPredictor:
         self.tpm_thresholds_stats = None
 
         # Data file path
-        self.data_file_path = "/Users/dinhngocdong/Documents/learning/100-Days-Of-ML-Code/Src/Day5/datasets/newrelic_weekend_traffic_enhanced.csv"
+        self.data_file_path = "/Users/dongdinh/Documents/Learning/100-Days-Of-ML-Code/Src/Day5/datasets/newrelic_weekend_traffic_enhanced.csv"
 
         # Feature and target columns
         self.feature_columns = [
@@ -80,6 +80,33 @@ class AdvancedTrafficPredictor:
                 validation_fraction=0.1,
                 n_iter_no_change=20,
                 tol=1e-4
+            ),
+            'HistGradientBoosting': HistGradientBoostingRegressor(
+                # Core performance parameters
+                max_iter=200,  # Số iterations (tương đương n_estimators)
+                max_depth=8,  # Độ sâu cây tối ưu cho time series
+                learning_rate=0.08,  # Tốc độ học moderate cho stability
+
+                # Regularization để tránh overfitting
+                l2_regularization=0.02,  # L2 penalty cho weights
+                max_leaf_nodes=64,  # Giới hạn complexity
+                min_samples_leaf=8,  # Tránh overfitting với noisy data
+
+                # Early stopping cho optimal convergence
+                early_stopping=True,  # Tự động dừng khi không improve
+                validation_fraction=0.15,  # 15% data cho validation
+                n_iter_no_change=15,  # Patience cho early stopping
+                tol=1e-4,  # Tolerance cho convergence
+
+                # Performance optimization
+                random_state=42,  # Reproducibility
+                warm_start=False,  # Fresh training mỗi lần
+
+                # Categorical features support (tự động detect)
+                categorical_features='from_dtype',  # Auto-detect categorical columns
+
+                # Missing values handling
+                # (HistGradientBoosting tự động handle NaN values)
             ),
             'LinearRegression': LinearRegression(
                 fit_intercept=True
@@ -345,78 +372,188 @@ class AdvancedTrafficPredictor:
 
         return df
 
+    # def train_models(self, df):
+    #     """Train models for each target variable"""
+    #     print("🤖 Training models...")
+    #
+    #     # Prepare features
+    #     X = df[self.feature_columns].fillna(0)
+    #
+    #     # Initialize storage
+    #     self.models = {target: {} for target in self.target_columns}
+    #     self.scalers = {target: StandardScaler() for target in self.target_columns}
+    #     self.model_performance = {target: {} for target in self.target_columns}
+    #     self.best_models = {}
+    #
+    #     # Train models for each target
+    #     for target in self.target_columns:
+    #         print(f"\n🎯 Training models for {target}...")
+    #
+    #         # Prepare target variable
+    #         y = df[target].fillna(df['tpm'])
+    #
+    #         # Split data
+    #         X_train, X_test, y_train, y_test = train_test_split(
+    #             X, y, test_size=0.2, random_state=42
+    #         )
+    #
+    #         # Scale features for SVR
+    #         X_train_scaled = self.scalers[target].fit_transform(X_train)
+    #         X_test_scaled = self.scalers[target].transform(X_test)
+    #
+    #         best_score = -np.inf
+    #
+    #         # Train each algorithm
+    #         for name, algorithm in self.algorithms.items():
+    #             print(f"   Training {name}...")
+    #
+    #             try:
+    #                 # Use scaled features for SVR, original for others
+    #                 if name == 'SVR':
+    #                     model = algorithm.fit(X_train_scaled, y_train)
+    #                     y_pred = model.predict(X_test_scaled)
+    #                 else:
+    #                     model = algorithm.fit(X_train, y_train)
+    #                     y_pred = model.predict(X_test)
+    #
+    #                 # Calculate metrics
+    #                 mse = mean_squared_error(y_test, y_pred)
+    #                 rmse = np.sqrt(mse)
+    #                 mae = mean_absolute_error(y_test, y_pred)
+    #                 r2 = r2_score(y_test, y_pred)
+    #
+    #                 # Store model and performance
+    #                 self.models[target][name] = model
+    #                 self.model_performance[target][name] = {
+    #                     'mse': mse,
+    #                     'rmse': rmse,
+    #                     'mae': mae,
+    #                     'r2': r2
+    #                 }
+    #
+    #                 # Track best model
+    #                 if r2 > best_score:
+    #                     best_score = r2
+    #                     self.best_models[target] = name
+    #
+    #                 print(f"      ✅ {name}: R² = {r2:.3f}, RMSE = {rmse:.2f}")
+    #
+    #             except Exception as e:
+    #                 print(f"      ❌ {name}: Failed - {str(e)}")
+    #
+    #         print(f"   🏆 Best model for {target}: {self.best_models[target]} (R² = {best_score:.3f})")
+    #
+    #     print("\n✅ Model training completed!")
+
     def train_models(self, df):
-        """Train models for each target variable"""
-        print("🤖 Training models...")
+        """Train models with proper time-based split for time series data"""
+        print("🤖 Training models with TIME-BASED SPLIT...")
 
-        # Prepare features
-        X = df[self.feature_columns].fillna(0)
+        # ✅ PROPER: Time-based split instead of random split
+        df_sorted = df.sort_values('timestamp').reset_index(drop=True)
+        split_idx = int(len(df_sorted) * 0.8)  # 80% for training
 
-        # Initialize storage
-        self.models = {target: {} for target in self.target_columns}
-        self.scalers = {target: StandardScaler() for target in self.target_columns}
-        self.model_performance = {target: {} for target in self.target_columns}
+        print(f"📊 Data split info:")
+        print(f"   • Total records: {len(df_sorted):,}")
+        print(f"   • Train records: {split_idx:,}")
+        print(f"   • Test records: {len(df_sorted) - split_idx:,}")
+        print(f"   • Train period: {df_sorted.iloc[0]['timestamp']} to {df_sorted.iloc[split_idx - 1]['timestamp']}")
+        print(f"   • Test period: {df_sorted.iloc[split_idx]['timestamp']} to {df_sorted.iloc[-1]['timestamp']}")
+
+        train_df = df_sorted.iloc[:split_idx]
+        test_df = df_sorted.iloc[split_idx:]
+
+        # Compute thresholds ONLY on training data to avoid data leakage
+        self.tpm_thresholds = self.compute_tpm_thresholds_from_df(train_df)
+        print(f"🎯 TPM Thresholds (from train data only): {self.tpm_thresholds}")
+
+        self.models = {}
+        self.scalers = {}
+        self.model_performance = {}
         self.best_models = {}
 
-        # Train models for each target
+        # Train for each target
         for target in self.target_columns:
-            print(f"\n🎯 Training models for {target}...")
+            print(f"\n🎯 Training models for target: {target}")
 
-            # Prepare target variable
-            y = df[target].fillna(df['tpm'])
+            # Check if target exists and has valid values
+            if target not in train_df.columns:
+                print(f"⚠️ Target {target} not found in training data, skipping...")
+                continue
 
-            # Split data
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.2, random_state=42
-            )
+            # Remove rows where target is NaN
+            train_valid = train_df.dropna(subset=[target] + self.feature_columns)
+            test_valid = test_df.dropna(subset=[target] + self.feature_columns)
 
-            # Scale features for SVR
-            X_train_scaled = self.scalers[target].fit_transform(X_train)
-            X_test_scaled = self.scalers[target].transform(X_test)
+            if len(train_valid) == 0:
+                print(f"⚠️ No valid training data for {target}, skipping...")
+                continue
+
+            X_train = train_valid[self.feature_columns]
+            y_train = train_valid[target]
+            X_test = test_valid[self.feature_columns] if len(test_valid) > 0 else None
+            y_test = test_valid[target] if len(test_valid) > 0 else None
+
+            print(f"   • Train samples: {len(X_train):,}")
+            print(f"   • Test samples: {len(X_test) if X_test is not None else 0:,}")
+
+            # Initialize containers for this target
+            self.models[target] = {}
+            self.model_performance[target] = {}
+
+            # Scale features (fit only on training data!)
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train)
+            X_test_scaled = scaler.transform(X_test) if X_test is not None else None
+            self.scalers[target] = scaler
 
             best_score = -np.inf
+            best_model_name = None
 
             # Train each algorithm
             for name, algorithm in self.algorithms.items():
-                print(f"   Training {name}...")
+                print(f"     Training {name}...")
 
                 try:
-                    # Use scaled features for SVR, original for others
+                    # Train model
                     if name == 'SVR':
                         model = algorithm.fit(X_train_scaled, y_train)
-                        y_pred = model.predict(X_test_scaled)
+                        y_pred = model.predict(X_test_scaled) if X_test_scaled is not None else None
                     else:
                         model = algorithm.fit(X_train, y_train)
-                        y_pred = model.predict(X_test)
+                        y_pred = model.predict(X_test) if X_test is not None else None
 
-                    # Calculate metrics
-                    mse = mean_squared_error(y_test, y_pred)
-                    rmse = np.sqrt(mse)
-                    mae = mean_absolute_error(y_test, y_pred)
-                    r2 = r2_score(y_test, y_pred)
-
-                    # Store model and performance
                     self.models[target][name] = model
-                    self.model_performance[target][name] = {
-                        'mse': mse,
-                        'rmse': rmse,
-                        'mae': mae,
-                        'r2': r2
-                    }
 
-                    # Track best model
-                    if r2 > best_score:
-                        best_score = r2
-                        self.best_models[target] = name
+                    # Evaluate only if we have test data
+                    if X_test is not None and len(X_test) > 0:
+                        r2 = r2_score(y_test, y_pred)
+                        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+                        mae = mean_absolute_error(y_test, y_pred)
 
-                    print(f"      ✅ {name}: R² = {r2:.3f}, RMSE = {rmse:.2f}")
+                        self.model_performance[target][name] = {
+                            'r2': r2, 'rmse': rmse, 'mae': mae
+                        }
+
+                        print(f"       R²: {r2:.4f}, RMSE: {rmse:.2f}, MAE: {mae:.2f}")
+
+                        # Track best model based on R²
+                        if r2 > best_score:
+                            best_score = r2
+                            best_model_name = name
+                    else:
+                        print(f"       ⚠️ No test data available for evaluation")
 
                 except Exception as e:
-                    print(f"      ❌ {name}: Failed - {str(e)}")
+                    print(f"       ❌ Failed to train {name}: {str(e)}")
 
-            print(f"   🏆 Best model for {target}: {self.best_models[target]} (R² = {best_score:.3f})")
+            if best_model_name:
+                self.best_models[target] = best_model_name
+                print(f"   🏆 Best model for {target}: {best_model_name} (R²: {best_score:.4f})")
+            else:
+                print(f"   ⚠️ No successful model for {target}")
 
-        print("\n✅ Model training completed!")
+        print(f"\n✅ Training completed! Best models: {self.best_models}")
 
     def save_models(self):
         """Save trained models"""
@@ -733,7 +870,7 @@ class AdvancedTrafficPredictor:
 
         # Colors for models
         model_colors = {'RandomForest': 'green', 'GradientBoosting': 'blue',
-                        'LinearRegression': 'orange', 'SVR': 'red'}
+                        'LinearRegression': 'orange', 'SVR': 'red', 'HistGradientBoosting': 'purple'}
 
         # 1. R² Score Comparison
         ax1 = axes[0, 0]

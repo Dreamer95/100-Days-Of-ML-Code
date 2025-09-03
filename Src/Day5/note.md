@@ -162,3 +162,30 @@ Cách diễn giải
 Vì sao quan trọng
 - Cho thấy mối quan hệ “độ phức tạp mô hình – lượng dữ liệu – hiệu năng”, giúp chọn đúng hướng tối ưu: tăng dữ liệu hay tinh chỉnh siêu tham số/đặc trưng.
 - Tránh tối ưu mù quáng; bạn thấy được khi nào mô hình đạt “điểm bão hòa” và khi nào cần đổi kiến trúc/đặc trưng.
+
+
+## Ý nghĩa của Rolling Features trong Traffic Prediction
+
+**Mục đích chính:** Nắm bắt **xu hướng và biến động** của traffic trong quá khứ gần để dự đoán tương lai chính xác hơn.
+
+### Các Rolling Features và vai trò:
+
+1. **Rolling Mean (MA - Moving Average)**
+   - `tpm_rolling_mean_3/5/15/30`: Giá trị trung bình trong 3/5/15/30 phút gần đây
+   - **Vai trò:** Làm mượt dữ liệu, loại bỏ nhiễu, thể hiện xu hướng tổng quát
+
+2. **Rolling Std (Standard Deviation)** 
+   - `tpm_rolling_std_3/5/15/30`: Độ biến động trong các cửa sổ thời gian
+   - **Vai trò:** Đo lường tính ổn định/bất thường của traffic
+
+### Tại sao quan trọng trong Traffic Prediction:
+
+- **Xu hướng ngắn hạn:** MA 3-5 phút cho biết traffic đang tăng/giảm
+- **Xu hướng trung hạn:** MA 15-30 phút phản ánh pattern lớn hơn (rush hour, lunch time)
+- **Phát hiện anomaly:** Std cao = traffic bất thường (có thể do sự cố, viral content)
+- **Context cho model:** Thay vì chỉ biết TPM hiện tại = 120, model còn biết "120 này cao hay thấp so với 15 phút qua"
+
+**Ví dụ thực tế:** 
+- TPM = 120 với MA_15min = 100 → đang trong xu hướng tăng
+- TPM = 120 với MA_15min = 140 → đang trong xu hướng giảm
+- Cùng giá trị 120 nhưng context khác nhau → dự đoán khác nhau
