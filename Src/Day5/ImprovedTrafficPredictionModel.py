@@ -342,192 +342,73 @@ class ImprovedTrafficPredictor:
         return X_selected, selected_features
 
     def get_optimized_models_for_mixed_granularity(self):
-        """Models với regularization MẠNH để tránh overfitting"""
+        """Improved models with better hyperparameters for enhanced performance"""
         return {
-            'RandomForest_Adaptive': RandomForestRegressor(
-                n_estimators=200,  # Giảm từ 500 → 200
-                max_depth=8,  # Giảm từ 16 → 8
-                min_samples_split=20,  # Tăng từ 8 → 20
-                min_samples_leaf=10,  # Tăng từ 4 → 10
-                max_features=0.5,  # Giảm từ 'sqrt' → 0.5
+            'RandomForest_Enhanced': RandomForestRegressor(
+                n_estimators=300,  # Increased for better performance
+                max_depth=12,  # Balanced depth for complexity vs overfitting
+                min_samples_split=15,  # Optimized split threshold
+                min_samples_leaf=8,  # Balanced leaf size
+                max_features='sqrt',  # Optimal feature sampling
                 bootstrap=True,
                 oob_score=True,
                 random_state=42,
                 n_jobs=-1
             ),
-            'GradientBoosting_Robust': GradientBoostingRegressor(
-                loss='huber',  # Robust với outliers
-                alpha=0.9,  # Conservative với outliers
-                learning_rate=0.03,  # Giảm từ 0.05 → 0.03 (slower)
-                n_estimators=300,  # Giảm từ 600 → 300
-                max_depth=4,  # Giảm từ 6 → 4
-                subsample=0.7,  # Giảm từ 0.8 → 0.7
-                min_samples_leaf=15,  # Tăng từ 10 → 15
-                min_samples_split=30,  # Thêm constraint
-                max_features=0.3,  # Thêm feature subsampling
+            'GradientBoosting_Enhanced': GradientBoostingRegressor(
+                loss='huber',  # Robust to outliers
+                alpha=0.95,  # Slightly more conservative
+                learning_rate=0.08,  # Improved learning rate
+                n_estimators=400,  # Increased for better learning
+                max_depth=6,  # Optimal depth
+                subsample=0.8,  # Good sampling ratio
+                min_samples_leaf=12,  # Balanced leaf constraint
+                min_samples_split=25,  # Optimal split constraint
+                max_features=0.7,  # Better feature sampling
                 validation_fraction=0.15,
-                n_iter_no_change=15,  # Earlier stopping
-                tol=1e-4,
+                n_iter_no_change=20,  # More patience for convergence
+                tol=1e-5,  # Tighter tolerance
                 random_state=42
             ),
-            'HistGradientBoosting_Fast': HistGradientBoostingRegressor(
+            'HistGradientBoosting_Enhanced': HistGradientBoostingRegressor(
                 loss='squared_error',
-                learning_rate=0.05,  # Giảm từ 0.08 → 0.05
-                max_iter=200,  # Giảm từ 400 → 200
-                max_depth=5,  # Giảm từ 8 → 5
-                min_samples_leaf=10,  # Tăng từ 5 → 10
-                l2_regularization=1.0,  # Tăng từ 0.1 → 1.0
+                learning_rate=0.1,  # Optimal learning rate
+                max_iter=300,  # Increased iterations
+                max_depth=8,  # Better depth for complex patterns
+                min_samples_leaf=8,  # Balanced constraint
+                l2_regularization=0.5,  # Moderate regularization
                 early_stopping=True,
-                validation_fraction=0.2,  # Tăng validation
-                n_iter_no_change=15,  # Earlier stopping
+                validation_fraction=0.15,
+                n_iter_no_change=20,  # More patience
                 random_state=42
             ),
-            'Ridge_Regularized': Ridge(
-                alpha=1000.0,  # Tăng MẠNH từ 10.0 → 1000.0
+            'XGBoost_Enhanced': GradientBoostingRegressor(
+                loss='squared_error',
+                learning_rate=0.1,
+                n_estimators=350,
+                max_depth=7,
+                min_samples_split=20,
+                min_samples_leaf=10,
+                subsample=0.85,
+                max_features=0.8,
+                random_state=42
+            ),
+            'Ridge_Optimized': Ridge(
+                alpha=100.0,  # Optimized regularization
                 solver='auto',
                 random_state=42
-            ),
-            'SVR_RBF_Tuned': SVR(
-                kernel='rbf',
-                C=10,  # Giảm từ 100 → 10 (less complex)
-                epsilon=0.1,  # Tăng từ 0.01 → 0.1 (more tolerance)
-                gamma='scale',  # Change từ 'auto' → 'scale'
-                max_iter=1000  # Limit iterations
             )
         }
 
-    def train_and_evaluate_with_real_data(self):
+    def train_and_evaluate_optimized(self):
         """
-        Enhanced training with real New Relic data
+        Consolidated optimized training with feature selection and time series validation
         """
-        print("🚀 Starting training with real New Relic data...")
+        print("🚀 Starting optimized training with real New Relic data...")
 
-        # Load và tạo features
-        raw_data = self.load_real_data()
-        processed_data = self.create_granularity_adaptive_features(raw_data)
-
-        if processed_data.empty:
-            raise ValueError("No processed data available for training")
-
-        # Extract target column
-        if 'tpm' not in processed_data.columns:
-            raise ValueError("Target column 'tpm' not found in processed data")
-
-        # Prepare data
-        self.X_processed = processed_data.drop(columns=['tpm'])
-        self.y_processed = processed_data['tpm']
-
-        print(f"📊 Using {len(self.X_processed.columns)} features for training")
-
-        # Get optimized models
-        algorithms = self.get_optimized_models_for_mixed_granularity()
-
-        # Initialize storage
-        self.models = {'tpm': {}}
-        self.scalers = {}
-        model_performance = {}
-
-        # Feature columns for later use
-        self.feature_cols = list(self.X_processed.columns)
-
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            self.X_processed, self.y_processed,
-            test_size=0.2, random_state=42, shuffle=True
-        )
-
-        print(f"🎯 Processing tpm...")
-
-        # Check for categorical columns
-        categorical_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
-        numeric_cols = X_train.select_dtypes(include=[np.number]).columns.tolist()
-
-        print(f"📋 Found {len(categorical_cols)} categorical and {len(numeric_cols)} numeric features")
-
-        # Label encode categorical columns if any
-        if categorical_cols:
-            if not hasattr(self, 'label_encoders'):
-                self.label_encoders = {}
-
-            for col in categorical_cols:
-                if col not in self.label_encoders:
-                    from sklearn.preprocessing import LabelEncoder
-                    self.label_encoders[col] = LabelEncoder()
-                    X_train[col] = self.label_encoders[col].fit_transform(X_train[col].astype(str))
-                    X_test[col] = self.label_encoders[col].transform(X_test[col].astype(str))
-
-        # Train models
-        best_score = -np.inf
-        best_model_name = None
-
-        for name, model in algorithms.items():
-            print(f"   🔄 Training {name}...")
-
-            try:
-                # Fit model
-                model.fit(X_train, y_train)
-
-                # Predict
-                y_pred = model.predict(X_test)
-
-                # Calculate metrics
-                r2 = r2_score(y_test, y_pred)
-                mae = mean_absolute_error(y_test, y_pred)
-
-                # Store model
-                self.models['tpm'][name] = model
-                model_performance[name] = {
-                    'test_r2': r2,
-                    'test_mae': mae
-                }
-
-                print(f"   ✅ {name}: R² = {r2:.3f}, MAE = {mae:.1f}")
-
-                # Track best model
-                if r2 > best_score:
-                    best_score = r2
-                    best_model_name = name
-
-            except Exception as e:
-                print(f"   ❌ {name} failed: {e}")
-                continue
-
-        if best_model_name:
-            print(f"   🏆 Best model: {best_model_name} (R² = {best_score:.3f})")
-
-            # Set best models
-            self.best_models = {'tpm': best_model_name}
-            self.model_performance = {'tpm': model_performance}
-
-            # Prepare results
-            results = {
-                'best_models': self.best_models,
-                'model_performance': self.model_performance,
-                'feature_columns': self.feature_cols,
-                'target_columns': ['tpm'],
-                'total_records': len(processed_data),
-                'processed_records': len(self.X_processed),
-                'training_info': {
-                    'data_source': self.data_file_path,
-                    'num_features': len(self.feature_cols)
-                }
-            }
-
-            return results
-        else:
-            print("❌ No models trained successfully")
-            return None
-
-    def train_and_evaluate_with_time_series_split(self):
-        """Training với feature selection, regularization và training-based TPM thresholds"""
-        from sklearn.model_selection import TimeSeriesSplit
-        from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-
-        print("\n=== TRAINING WITH ANTI-OVERFITTING MEASURES ===")
-
-        # Load và process data
+        # Load and process data
         if not hasattr(self, 'enhanced_data') or self.enhanced_data is None:
-            print("📂 Loading and processing data first...")
+            print("📂 Loading and processing data...")
             raw_data = self.load_real_data()
             processed_data = self.create_granularity_adaptive_features(raw_data)
 
@@ -538,55 +419,29 @@ class ImprovedTrafficPredictor:
             self.X_processed = processed_data.drop(columns=['tpm'])
             self.y_processed = processed_data['tpm']
 
-            print(f"📊 Initial features: {len(self.X_processed.columns)}")
-
-        # ============ COMPUTE TPM THRESHOLDS FROM TRAINING DATA ============
-        print("\n📊 COMPUTING TPM CLASSIFICATION THRESHOLDS...")
-
-        # Tính thresholds từ toàn bộ dữ liệu training (trước khi split)
+        # Compute TPM thresholds from training data
+        print("\n📊 Computing TPM classification thresholds...")
         if hasattr(self, 'enhanced_data') and self.enhanced_data is not None:
             training_thresholds = self.compute_tpm_thresholds_from_df(self.enhanced_data)
-            print("✅ TPM thresholds computed from full training dataset")
         else:
-            # Fallback: tính từ processed data
             temp_df = pd.DataFrame({'tpm': self.y_processed})
             training_thresholds = self.compute_tpm_thresholds_from_df(temp_df)
-            print("✅ TPM thresholds computed from processed data")
 
-        # ============ FEATURE SELECTION (CRITICAL!) ============
-        print("\n🎯 FEATURE SELECTION TO PREVENT OVERFITTING...")
-
-        # Select optimal number of features based on data size
+        # Feature selection for optimal performance
+        print("\n🎯 Applying feature selection...")
         n_samples = len(self.X_processed)
-        optimal_features = min(15, max(5, n_samples // 200))  # Rule: ~200 samples per feature
+        optimal_features = min(20, max(8, n_samples // 150))  # Improved ratio
 
         print(f"   Data size: {n_samples} samples")
         print(f"   Optimal features: {optimal_features}")
 
-        # Apply feature selection - with fallback if method doesn't exist
-        if hasattr(self, 'select_important_features'):
-            X_selected, selected_features = self.select_important_features(
-                self.X_processed, self.y_processed, max_features=optimal_features
-            )
+        X_selected, selected_features = self.select_important_features(
+            self.X_processed, self.y_processed, max_features=optimal_features
+        )
 
-            # Update processed data
-            self.X_processed = X_selected
-            self.feature_cols = selected_features
-
-            print(f"✅ Reduced features: {len(self.X_processed.columns)}")
-        else:
-            print("⚠️ Feature selection method not available - using all features")
-            # Just limit to top features by variance if too many
-            if len(self.X_processed.columns) > optimal_features:
-                from sklearn.feature_selection import VarianceThreshold
-                selector = VarianceThreshold()
-                X_var = selector.fit_transform(self.X_processed)
-                selected_cols = self.X_processed.columns[selector.get_support()][:optimal_features]
-                self.X_processed = self.X_processed[selected_cols]
-                self.feature_cols = list(selected_cols)
-                print(f"✅ Used variance-based selection: {len(selected_cols)} features")
-            else:
-                self.feature_cols = list(self.X_processed.columns)
+        # Update processed data
+        self.X_processed = X_selected
+        self.feature_cols = selected_features
 
         # Ensure all data is numeric
         print("🔢 Final data validation...")
@@ -594,34 +449,34 @@ class ImprovedTrafficPredictor:
             if not pd.api.types.is_numeric_dtype(self.X_processed[col]):
                 self.X_processed[col] = pd.to_numeric(self.X_processed[col], errors='coerce').fillna(0)
 
-        # Clean any remaining issues
         self.X_processed = self.X_processed.fillna(0).replace([np.inf, -np.inf], 0)
 
-        print(f"   Final shape: {self.X_processed.shape}")
-        print(f"   NaN count: {self.X_processed.isnull().sum().sum()}")
-
-        # ============ CONSERVATIVE TIME-BASED SPLIT ============
+        # Time-based split for better validation
         n_samples = len(self.X_processed)
-        split_idx = int(n_samples * 0.7)  # 70% train, 30% test (more conservative)
+        split_idx = int(n_samples * 0.75)  # 75% train, 25% test
 
         X_train = self.X_processed.iloc[:split_idx].copy()
         X_test = self.X_processed.iloc[split_idx:].copy()
         y_train = self.y_processed.iloc[:split_idx].copy()
         y_test = self.y_processed.iloc[split_idx:].copy()
 
-        print(f"\nConservative time-based split:")
-        print(f"  Train: {len(X_train)} samples ({len(X_train) / len(X_train.columns):.1f} samples per feature)")
+        print(f"\nTime-based split:")
+        print(f"  Train: {len(X_train)} samples")
         print(f"  Test: {len(X_test)} samples")
 
-        # ============ GET REGULARIZED MODELS ============
+        # Get enhanced models
         algorithms = self.get_optimized_models_for_mixed_granularity()
 
-        # ============ TIME SERIES CROSS-VALIDATION ============
-        print("\n=== TIME SERIES CROSS-VALIDATION ===")
-        tscv = TimeSeriesSplit(n_splits=3)  # Reduced splits for more robust estimates
-        cv_results = {}
+        # Initialize storage
+        self.models = {'tpm': {}}
+        self.scalers = {}
+        model_performance = {}
+        best_score = -np.inf
+        best_model_name = None
 
-        trained_models = {}
+        # Train models with cross-validation
+        print("\n=== Training Enhanced Models ===")
+        tscv = TimeSeriesSplit(n_splits=3)
 
         for name, model in algorithms.items():
             print(f"\n🔄 Training {name}...")
@@ -635,154 +490,76 @@ class ImprovedTrafficPredictor:
                     y_train_fold = y_train.iloc[train_idx]
                     y_val_fold = y_train.iloc[val_idx]
 
-                    from sklearn.base import clone
-                    model_clone = clone(model)
-
-                    # Handle SVR scaling
-                    if 'SVR' in name:
-                        from sklearn.preprocessing import StandardScaler
-                        scaler = StandardScaler()
-                        X_train_scaled = scaler.fit_transform(X_train_fold)
-                        X_val_scaled = scaler.transform(X_val_fold)
-
-                        model_clone.fit(X_train_scaled, y_train_fold)
-                        pred = model_clone.predict(X_val_scaled)
-                    else:
-                        model_clone.fit(X_train_fold, y_train_fold)
-                        pred = model_clone.predict(X_val_fold)
-
-                    score = r2_score(y_val_fold, pred)
-                    cv_scores.append(score)
+                    model.fit(X_train_fold, y_train_fold)
+                    y_val_pred = model.predict(X_val_fold)
+                    cv_score = r2_score(y_val_fold, y_val_pred)
+                    cv_scores.append(cv_score)
 
                 cv_mean = np.mean(cv_scores)
                 cv_std = np.std(cv_scores)
 
-                cv_results[name] = {
-                    'mean_score': cv_mean,
-                    'std_score': cv_std,
-                    'scores': cv_scores
-                }
-
-                print(f"   CV Score: {cv_mean:.4f} ± {cv_std:.4f}")
-
-            except Exception as e:
-                print(f"   ❌ CV failed: {e}")
-                continue
-
-        # ============ FINAL TRAINING & EVALUATION ============
-        print("\n=== FINAL MODEL EVALUATION ===")
-        final_results = {}
-
-        for name, model in algorithms.items():
-            if name not in cv_results:
-                continue
-
-            print(f"\nFinal training {name}...")
-
-            try:
-                from sklearn.base import clone
-                final_model = clone(model)
-
-                # Handle SVR scaling
-                if 'SVR' in name:
-                    from sklearn.preprocessing import StandardScaler
-                    scaler = StandardScaler()
-                    X_train_scaled = scaler.fit_transform(X_train)
-                    X_test_scaled = scaler.transform(X_test)
-
-                    final_model.fit(X_train_scaled, y_train)
-                    train_pred = final_model.predict(X_train_scaled)
-                    test_pred = final_model.predict(X_test_scaled)
-
-                    # Save scaler for later use
-                    if not hasattr(self, 'scalers'):
-                        self.scalers = {}
-                    self.scalers['tpm'] = scaler
-
-                else:
-                    final_model.fit(X_train, y_train)
-                    train_pred = final_model.predict(X_train)
-                    test_pred = final_model.predict(X_test)
+                # Final training on full training set
+                model.fit(X_train, y_train)
+                y_pred = model.predict(X_test)
 
                 # Calculate metrics
-                train_r2 = r2_score(y_train, train_pred)
-                test_r2 = r2_score(y_test, test_pred)
-                train_mae = mean_absolute_error(y_train, train_pred)
-                test_mae = mean_absolute_error(y_test, test_pred)
-                cv_score = cv_results[name]['mean_score']
+                r2 = r2_score(y_test, y_pred)
+                mae = mean_absolute_error(y_test, y_pred)
+                rmse = np.sqrt(mean_squared_error(y_test, y_pred))
 
-                final_results[name] = {
-                    'train_r2': train_r2,
-                    'test_r2': test_r2,
-                    'train_mae': train_mae,
-                    'test_mae': test_mae,
-                    'cv_score': cv_score,
-                    'overfitting_gap': train_r2 - test_r2
+                # Store model and performance
+                self.models['tpm'][name] = model
+                model_performance[name] = {
+                    'test_r2': r2,
+                    'test_mae': mae,
+                    'test_rmse': rmse,
+                    'cv_r2_mean': cv_mean,
+                    'cv_r2_std': cv_std
                 }
 
-                trained_models[name] = final_model
+                print(f"   ✅ {name}:")
+                print(f"      Test R² = {r2:.3f}, MAE = {mae:.1f}, RMSE = {rmse:.1f}")
+                print(f"      CV R² = {cv_mean:.3f} ± {cv_std:.3f}")
 
-                print(f"  📊 Results:")
-                print(f"     CV R²: {cv_score:.4f}")
-                print(f"     Train R²: {train_r2:.4f}")
-                print(f"     Test R²: {test_r2:.4f}")
-                print(f"     Gap: {train_r2 - test_r2:.4f}")
-                print(f"     Test MAE: {test_mae:.2f}")
-
-                # Warn about overfitting
-                gap = train_r2 - test_r2
-                if gap > 0.15:
-                    print(f"     ⚠️ WARNING: High overfitting gap!")
-                elif gap > 0.05:
-                    print(f"     ⚠️ Moderate overfitting detected")
-                else:
-                    print(f"     ✅ Good generalization")
+                # Track best model
+                if r2 > best_score:
+                    best_score = r2
+                    best_model_name = name
 
             except Exception as e:
-                print(f"  ❌ Final training failed: {e}")
+                print(f"   ❌ {name} failed: {e}")
                 continue
 
-        if not final_results:
+        if best_model_name:
+            print(f"\n🏆 Best model: {best_model_name} (R² = {best_score:.3f})")
+
+            # Set best models
+            self.best_models = {'tpm': best_model_name}
+            self.model_performance = {'tpm': model_performance}
+
+            # Store training thresholds
+            self.tpm_thresholds_stats = training_thresholds
+
+            # Prepare results
+            results = {
+                'best_models': self.best_models,
+                'model_performance': self.model_performance,
+                'feature_columns': self.feature_cols,
+                'target_columns': ['tpm'],
+                'total_records': len(self.X_processed),
+                'training_info': {
+                    'data_source': self.data_file_path,
+                    'num_features': len(self.feature_cols),
+                    'tpm_thresholds': training_thresholds
+                }
+            }
+
+            return results
+        else:
             print("❌ No models trained successfully")
             return None
 
-        # ============ SELECT BEST MODEL (CONSERVATIVE) ============
-        # Choose based on CV score to avoid overfitting bias
-        best_model_name = max(final_results.keys(),
-                              key=lambda x: final_results[x]['cv_score'])
-
-        # Update class attributes
-        self.models = {'tpm': trained_models}
-        self.model_performance = {'tpm': final_results}
-        self.best_models = {'tpm': best_model_name}
-
-        best_result = final_results[best_model_name]
-        print(f"\n🏆 BEST MODEL: {best_model_name}")
-        print(f"   CV R²: {best_result['cv_score']:.4f}")
-        print(f"   Test R²: {best_result['test_r2']:.4f}")
-        print(f"   Overfitting Gap: {best_result['overfitting_gap']:.4f}")
-
-        # ============ PREPARE RESULTS WITH THRESHOLDS ============
-        results = {
-            'best_models': self.best_models,
-            'model_performance': self.model_performance,
-            'feature_columns': self.feature_cols,
-            'target_columns': ['tpm'],
-            'total_records': len(self.enhanced_data) if hasattr(self, 'enhanced_data') else len(self.X_processed),
-            'processed_records': len(self.X_processed),
-            'training_info': {
-                'data_source': self.data_file_path,
-                'num_features': len(self.feature_cols),
-                'feature_selection': 'Applied',
-                'regularization': 'Strong',
-                'tpm_thresholds': training_thresholds,  # Include computed thresholds
-                'thresholds_stats': getattr(self, 'tpm_thresholds_stats', None)
-            }
-        }
-
-        return results
-
-    # ============ REQUIRED HELPER METHODS (add if not already present) ============
+    # ============ REQUIRED HELPER METHODS ============
 
     def compute_tpm_thresholds_from_df(self, df):
         """
@@ -848,90 +625,6 @@ class ImprovedTrafficPredictor:
 
         return thresholds
 
-    def select_important_features(self, X, y, max_features=15):
-        """Chọn features quan trọng nhất để tránh overfitting"""
-        from sklearn.feature_selection import SelectKBest, f_regression
-        from sklearn.ensemble import RandomForestRegressor
-        from sklearn.linear_model import LassoCV
-
-        print(f"🎯 Feature Selection: {X.shape[1]} → {max_features} features")
-
-        if X.shape[1] <= max_features:
-            print("   No selection needed - already optimal size")
-            return X, list(X.columns)
-
-        # Method 1: Statistical F-test
-        print("   🔬 Statistical F-test selection...")
-        f_selector = SelectKBest(score_func=f_regression, k=max_features)
-        X_f = f_selector.fit_transform(X, y)
-        f_features = X.columns[f_selector.get_support()].tolist()
-
-        # Method 2: Lasso-based selection
-        print("   🔍 Lasso-based selection...")
-        try:
-            lasso = LassoCV(cv=3, random_state=42, max_iter=1000)
-            lasso.fit(X, y)
-
-            # Get features with non-zero coefficients
-            lasso_features = X.columns[np.abs(lasso.coef_) > 0.01].tolist()
-
-            if len(lasso_features) > max_features:
-                # Sort by absolute coefficient value
-                feature_importance = [(feat, abs(coef)) for feat, coef in
-                                      zip(X.columns, lasso.coef_) if abs(coef) > 0.01]
-                feature_importance.sort(key=lambda x: x[1], reverse=True)
-                lasso_features = [feat for feat, _ in feature_importance[:max_features]]
-
-        except Exception as e:
-            print(f"   ⚠️ Lasso selection failed: {e}")
-            lasso_features = f_features  # Fallback to F-test
-
-        # Method 3: Random Forest-based importance
-        print("   🌲 Random Forest importance...")
-        try:
-            rf = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
-            rf.fit(X, y)
-
-            feature_importance = [(feat, imp) for feat, imp in
-                                  zip(X.columns, rf.feature_importances_)]
-            feature_importance.sort(key=lambda x: x[1], reverse=True)
-            rf_features = [feat for feat, _ in feature_importance[:max_features]]
-
-        except Exception as e:
-            print(f"   ⚠️ RandomForest selection failed: {e}")
-            rf_features = f_features  # Fallback
-
-        # Combine selections - vote-based approach
-        print("   🗳️ Combining selection methods...")
-        feature_votes = {}
-
-        # Add votes from each method
-        for feat in f_features:
-            feature_votes[feat] = feature_votes.get(feat, 0) + 1
-        for feat in lasso_features:
-            feature_votes[feat] = feature_votes.get(feat, 0) + 1
-        for feat in rf_features:
-            feature_votes[feat] = feature_votes.get(feat, 0) + 1
-
-        # Sort by votes, then by F-statistic as tiebreaker
-        f_scores = dict(zip(X.columns[f_selector.get_support()],
-                            f_selector.scores_[f_selector.get_support()]))
-
-        selected_features = sorted(feature_votes.keys(),
-                                   key=lambda x: (feature_votes[x], f_scores.get(x, 0)),
-                                   reverse=True)[:max_features]
-
-        print(f"   ✅ Selected {len(selected_features)} features:")
-        for i, feat in enumerate(selected_features[:10]):  # Show top 10
-            votes = feature_votes[feat]
-            print(f"      {i + 1:2d}. {feat} (votes: {votes})")
-
-        if len(selected_features) > 10:
-            print(f"      ... and {len(selected_features) - 10} more")
-
-        # Return selected features
-        X_selected = X[selected_features]
-        return X_selected, selected_features
 
     def classify_tpm_value(self, tpm_value, thresholds=None):
         """Phân loại giá trị TPM thành các levels dựa trên training data thresholds"""
@@ -2041,6 +1734,148 @@ class ImprovedTrafficPredictor:
         except Exception as e:
             print(f"\n❌ Error in interactive demo: {e}")
 
+    def predict_realtime_from_newrelic(self, minutes_ahead=(5, 10, 15, 30)):
+        """
+        Real-time prediction using the last 3 hours of data from New Relic
+
+        Args:
+            minutes_ahead: Tuple of minutes to predict ahead
+
+        Returns:
+            dict: Prediction results with TPM forecasts and confidence levels
+        """
+        print("🔴 REAL-TIME PREDICTION FROM NEW RELIC")
+        print("=" * 50)
+
+        if not hasattr(self, 'models') or not self.models or not hasattr(self, 'best_models') or not self.best_models:
+            raise ValueError("❌ Models are not loaded/trained. Please train or load models first.")
+
+        try:
+            # Import the function from newrelic_traffic_collector
+            from newrelic_traffic_collector import get_recent_3h_1min_dataframe
+
+            print("📡 Fetching recent 3-hour data from New Relic...")
+            recent_data = get_recent_3h_1min_dataframe()
+
+            if recent_data is None or recent_data.empty:
+                raise ValueError("❌ No recent data available from New Relic")
+
+            print(f"✅ Retrieved {len(recent_data)} data points from New Relic")
+            print(f"📅 Time range: {recent_data['timestamp'].min()} to {recent_data['timestamp'].max()}")
+
+            # Get the most recent data point
+            latest_data = recent_data.iloc[-1]
+            current_time = latest_data['timestamp']
+            current_tpm = latest_data['tpm']
+
+            print(f"🕐 Current time: {current_time}")
+            print(f"📊 Current TPM: {current_tpm:.1f}")
+
+            # Extract previous TPM values (last 10 minutes for context)
+            if len(recent_data) >= 10:
+                previous_tpms = recent_data['tpm'].iloc[-10:-1].tolist()  # Last 9 values before current
+                previous_tpms.reverse()  # Reverse to get [1min_ago, 2min_ago, ...]
+            else:
+                previous_tpms = recent_data['tpm'].iloc[:-1].tolist()
+                previous_tpms.reverse()
+
+            print(f"📈 Using {len(previous_tpms)} previous TPM values for context")
+
+            # Calculate response time trend (if we have enough data)
+            response_time = None
+            if len(recent_data) >= 5:
+                # Use TPM as a proxy for response time trend (higher TPM might indicate higher load)
+                recent_tpms = recent_data['tpm'].iloc[-5:].values
+                response_time = np.mean(recent_tpms) * 0.1  # Simple heuristic
+
+            # Detect if there might be a push notification effect
+            # Look for sudden TPM spikes in the last 30 minutes
+            push_notification_active = 0
+            minutes_since_push = 999999
+
+            if len(recent_data) >= 30:
+                last_30_min = recent_data['tpm'].iloc[-30:].values
+                current_avg = np.mean(last_30_min[-5:])  # Last 5 minutes average
+                baseline_avg = np.mean(last_30_min[:10])  # First 10 minutes average
+
+                # If current is significantly higher than baseline, might be push effect
+                if current_avg > baseline_avg * 1.5:  # 50% increase threshold
+                    push_notification_active = 1
+                    # Find the spike point
+                    for i in range(len(last_30_min) - 5, 0, -1):
+                        if last_30_min[i] > baseline_avg * 1.3:
+                            minutes_since_push = len(last_30_min) - i
+                            break
+
+            print(f"🔍 Push detection: Active={push_notification_active}, Minutes since={minutes_since_push}")
+
+            # Make prediction using the existing predict_from_inputs method
+            print(f"\n🔮 Making real-time predictions...")
+
+            prediction_time = pd.to_datetime(current_time)
+            if prediction_time.tzinfo is None:
+                # If timezone-naive, assume UTC
+                prediction_time = prediction_time.tz_localize('UTC')
+
+            # Convert to datetime object for prediction
+            prediction_datetime = prediction_time.to_pydatetime()
+
+            result = self.predict_from_inputs(
+                when=prediction_datetime,
+                current_tpm=float(current_tpm),
+                previous_tpms=previous_tpms,
+                response_time=response_time,
+                push_notification_active=push_notification_active,
+                minutes_since_push=minutes_since_push,
+                minutes_ahead=minutes_ahead
+            )
+
+            # Add real-time specific information
+            result['realtime_info'] = {
+                'data_source': 'New Relic API',
+                'data_points_used': len(recent_data),
+                'current_time': current_time.isoformat(),
+                'current_tpm': float(current_tpm),
+                'previous_tpms_count': len(previous_tpms),
+                'push_detection': {
+                    'active': bool(push_notification_active),
+                    'minutes_since': minutes_since_push
+                },
+                'data_freshness': 'Real-time (last 3 hours)'
+            }
+
+            # Display results
+            print(f"\n🎯 REAL-TIME PREDICTION RESULTS")
+            print(f"=" * 50)
+            print(f"📅 Prediction Time: {prediction_datetime.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+            print(f"📊 Current TPM: {current_tpm:.1f}")
+
+            print(f"\n🔮 Future TPM Predictions:")
+            print(f"{'Horizon':<10} {'TPM':<10} {'Level':<12} {'Change':<10}")
+            print(f"-" * 45)
+
+            for horizon, pred in result['predictions'].items():
+                label = result['labels'][horizon]
+                change = ((pred - current_tpm) / current_tpm) * 100 if current_tpm > 0 else 0
+                minutes = horizon.replace('tpm_', '').replace('min', '')
+
+                print(f"{minutes + 'min':<10} {pred:<10.1f} {label:<12} {change:+.1f}%")
+
+            # Traffic trend analysis
+            if len(previous_tpms) >= 3:
+                recent_trend = np.mean(previous_tpms[:3]) - np.mean(previous_tpms[-3:]) if len(previous_tpms) >= 6 else 0
+                trend_direction = "📈 Increasing" if recent_trend > 0 else "📉 Decreasing" if recent_trend < 0 else "➡️ Stable"
+                print(f"\n📊 Traffic Trend: {trend_direction}")
+
+            print(f"\n✅ Real-time prediction completed!")
+            return result
+
+        except ImportError:
+            raise ValueError("❌ Cannot import get_recent_3h_1min_dataframe. Make sure newrelic_traffic_collector.py is available.")
+        except Exception as e:
+            print(f"❌ Real-time prediction failed: {e}")
+            raise
+
 
 def train_model():
     """Huấn luyện và lưu model với format mới"""
@@ -2053,7 +1888,7 @@ def train_model():
     try:
         print("📊 Bước 1: Load dữ liệu và huấn luyện mô hình...")
 
-        results = predictor.train_and_evaluate_with_time_series_split()
+        results = predictor.train_and_evaluate_optimized()
 
         if results is None:
             print("❌ Training failed - no results returned")

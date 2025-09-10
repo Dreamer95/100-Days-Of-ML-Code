@@ -348,10 +348,17 @@ def process_newrelic_data_with_enhanced_metadata(data):
     return df
 
 
-def get_weekend_traffic_periods(weeks_back=12, focus_recent_weeks=True):
+def get_flexible_traffic_periods(weeks_back=12,
+                                 focus_recent_weeks=True,
+                                 start_day=3,  # Thursday (0=Monday, 1=Tuesday, ..., 6=Sunday)
+                                 start_hour=23,
+                                 start_minute=50,
+                                 end_day=6,  # Sunday
+                                 end_hour=23,
+                                 end_minute=59,
+                                 timezone_str='Asia/Ho_Chi_Minh'):
     """
-    Get weekend traffic periods: Thursday 23:50 to Sunday 00:00 (GMT+7)
-    Total duration: 48 hours 10 minutes per week
+    Get flexible traffic periods based on custom day/time ranges
 
     Parameters:
     -----------
@@ -359,6 +366,20 @@ def get_weekend_traffic_periods(weeks_back=12, focus_recent_weeks=True):
         Total weeks to go back for data collection
     focus_recent_weeks : bool
         If True, prioritize recent weeks with more granular time periods
+    start_day : int
+        Start day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
+    start_hour : int
+        Start hour (0-23)
+    start_minute : int
+        Start minute (0-59)
+    end_day : int
+        End day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
+    end_hour : int
+        End hour (0-23)
+    end_minute : int
+        End minute (0-59)
+    timezone_str : str
+        Timezone string (e.g., 'Asia/Ho_Chi_Minh', 'UTC', 'US/Pacific')
 
     Returns:
     --------
@@ -368,78 +389,106 @@ def get_weekend_traffic_periods(weeks_back=12, focus_recent_weeks=True):
     from datetime import datetime, timedelta, timezone
     import pytz
 
-    # GMT+7 timezone
-    gmt7 = pytz.timezone('Asia/Ho_Chi_Minh')
+    # Validate inputs
+    if not (0 <= start_day <= 6):
+        raise ValueError("start_day must be between 0 (Monday) and 6 (Sunday)")
+    if not (0 <= end_day <= 6):
+        raise ValueError("end_day must be between 0 (Monday) and 6 (Sunday)")
+    if not (0 <= start_hour <= 23):
+        raise ValueError("start_hour must be between 0 and 23")
+    if not (0 <= end_hour <= 23):
+        raise ValueError("end_hour must be between 0 and 23")
+    if not (0 <= start_minute <= 59):
+        raise ValueError("start_minute must be between 0 and 59")
+    if not (0 <= end_minute <= 59):
+        raise ValueError("end_minute must be between 0 and 59")
 
-    # Current time in GMT+7
-    now_gmt7 = datetime.now(gmt7)
+    # Setup timezone
+    target_tz = pytz.timezone(timezone_str)
+
+    # Current time in target timezone
+    now_tz = datetime.now(target_tz)
 
     periods = []
 
-    print(f"🕐 Weekend Period Definition: Thursday 23:50 to Sunday 00:00 (GMT+7)")
-    print(f"⏱️  Total duration per week: 48 hours 10 minutes")
-    print(f"🔄 Converting all times to UTC for New Relic API")
+    # Day names for display
+    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+    print(
+        f"🕐 Custom Period Definition: {day_names[start_day]} {start_hour:02d}:{start_minute:02d} to {day_names[end_day]} {end_hour:02d}:{end_minute:02d} ({timezone_str})")
+    print(f"🔄 Converting all times to UTC for API calls")
 
     for week in range(weeks_back):
-        # Find the most recent Thursday 23:50 GMT+7
-        days_since_thursday = (now_gmt7.weekday() - 3) % 7
-        current_thursday = now_gmt7 - timedelta(days=days_since_thursday, weeks=week)
-
-        # Set exact weekend start: Thursday 23:50 GMT+7
-        weekend_start_gmt7 = current_thursday.replace(
-            hour=23, minute=50, second=0, microsecond=0
+        # Calculate period start
+        days_since_start_day = (now_tz.weekday() - start_day) % 7
+        period_start_tz = now_tz - timedelta(days=days_since_start_day, weeks=week)
+        period_start_tz = period_start_tz.replace(
+            hour=start_hour,
+            minute=start_minute,
+            second=0,
+            microsecond=0
         )
 
-        # Set exact weekend end: Sunday 00:00 GMT+7 (next week)
-        weekend_end_gmt7 = weekend_start_gmt7 + timedelta(days=2, hours=0, minutes=10)
-        weekend_end_gmt7 = weekend_end_gmt7.replace(hour=23, minute=59, second=59, microsecond=999_999)
+        # Calculate period end
+        # Handle cross-week scenarios
+        if end_day >= start_day:
+            days_to_add = end_day - start_day
+            period_end_tz = period_start_tz + timedelta(days=days_to_add)
+        else:
+            # End day is next week (e.g., Friday to Tuesday)
+            days_to_add = (7 - start_day) + end_day
+            period_end_tz = period_start_tz + timedelta(days=days_to_add)
 
-        # Convert to UTC for New Relic API
-        weekend_start_utc = weekend_start_gmt7.astimezone(timezone.utc)
-        weekend_end_utc = weekend_end_gmt7.astimezone(timezone.utc)
+        period_end_tz = period_end_tz.replace(
+            hour=end_hour,
+            minute=end_minute,
+            second=59,
+            microsecond=999_999
+        )
+
+        # Convert to UTC for API calls
+        period_start_utc = period_start_tz.astimezone(timezone.utc)
+        period_end_utc = period_end_tz.astimezone(timezone.utc)
 
         # Calculate data age and priority
-        data_age_days = (now_gmt7 - weekend_start_gmt7).days
+        data_age_days = (now_tz - period_start_tz).days
         week_priority = max(1, 13 - week)
+
+        # Calculate total duration
+        total_hours = (period_end_utc - period_start_utc).total_seconds() / 3600
 
         print(f"\n📅 Week {week + 1}:")
         print(
-            f"   GMT+7: {weekend_start_gmt7.strftime('%Y-%m-%d %H:%M')} to {weekend_end_gmt7.strftime('%Y-%m-%d %H:%M')}")
-        print(
-            f"   UTC:   {weekend_start_utc.strftime('%Y-%m-%d %H:%M')} to {weekend_end_utc.strftime('%Y-%m-%d %H:%M')}")
+            f"   {timezone_str}: {period_start_tz.strftime('%Y-%m-%d %H:%M')} to {period_end_tz.strftime('%Y-%m-%d %H:%M')}")
+        print(f"   UTC:   {period_start_utc.strftime('%Y-%m-%d %H:%M')} to {period_end_utc.strftime('%Y-%m-%d %H:%M')}")
         print(f"   📊 Age: {data_age_days} days, Priority: {week_priority}")
-
-        # Calculate total weekend duration
-        total_hours = (weekend_end_utc - weekend_start_utc).total_seconds() / 3600
         print(f"   ⏱️  Duration: {total_hours:.2f} hours")
 
-        # Determine collection strategy based on data age and New Relic granularity table
+        # Apply collection strategy based on data age
         if focus_recent_weeks and data_age_days <= 8:
             # RECENT DATA (≤8 days): High-resolution strategy
             print(f"   🔥 RECENT DATA: Using high-resolution collection")
 
-            # Split into optimal periods based on New Relic granularity table
-            # ≤3 hours = 1-minute granularity, 3-6 hours = 2-minute granularity
-            current_time = weekend_start_utc
+            current_time = period_start_utc
             period_count = 0
 
-            while current_time < weekend_end_utc:
+            while current_time < period_end_utc:
                 # Use 3-hour chunks for 1-minute granularity (180 points)
-                period_duration = min(3.0, (weekend_end_utc - current_time).total_seconds() / 3600)
-                period_end = current_time + timedelta(hours=period_duration)
-                period_end = min(period_end, weekend_end_utc)
+                period_duration = min(3.0, (period_end_utc - current_time).total_seconds() / 3600)
+                chunk_end = current_time + timedelta(hours=period_duration)
+                chunk_end = min(chunk_end, period_end_utc)
 
                 periods.append((
                     current_time,
-                    period_end,
+                    chunk_end,
                     week_priority,
                     data_age_days
                 ))
 
-                period_duration_actual = (period_end - current_time).total_seconds() / 3600
+                period_duration_actual = (chunk_end - current_time).total_seconds() / 3600
                 print(f"     ⏰ Period {period_count + 1}: {period_duration_actual:.1f}h → 1-min granularity")
 
-                current_time = period_end
+                current_time = chunk_end
                 period_count += 1
 
                 if period_count >= 20:  # Safety limit
@@ -449,26 +498,25 @@ def get_weekend_traffic_periods(weeks_back=12, focus_recent_weeks=True):
             # MEDIUM-TERM DATA (8-14 days): Moderate resolution
             print(f"   📊 MEDIUM-TERM DATA: Using moderate-resolution collection")
 
-            # Use 6-hour chunks for 5-minute granularity (72 points)
-            current_time = weekend_start_utc
+            current_time = period_start_utc
             period_count = 0
 
-            while current_time < weekend_end_utc:
-                period_duration = min(6.0, (weekend_end_utc - current_time).total_seconds() / 3600)
-                period_end = current_time + timedelta(hours=period_duration)
-                period_end = min(period_end, weekend_end_utc)
+            while current_time < period_end_utc:
+                period_duration = min(6.0, (period_end_utc - current_time).total_seconds() / 3600)
+                chunk_end = current_time + timedelta(hours=period_duration)
+                chunk_end = min(chunk_end, period_end_utc)
 
                 periods.append((
                     current_time,
-                    period_end,
+                    chunk_end,
                     week_priority,
                     data_age_days
                 ))
 
-                period_duration_actual = (period_end - current_time).total_seconds() / 3600
+                period_duration_actual = (chunk_end - current_time).total_seconds() / 3600
                 print(f"     ⏰ Period {period_count + 1}: {period_duration_actual:.1f}h → 5-min granularity")
 
-                current_time = period_end
+                current_time = chunk_end
                 period_count += 1
 
                 if period_count >= 10:
@@ -478,27 +526,39 @@ def get_weekend_traffic_periods(weeks_back=12, focus_recent_weeks=True):
             # HISTORICAL DATA (>14 days): Low resolution
             print(f"   📈 HISTORICAL DATA: Using low-resolution collection")
 
-            # Use larger chunks for 30-minute or 1-hour granularity
             if total_hours <= 24:
-                # Single period with 30-minute granularity (48 points)
+                # Single period with 30-minute granularity
                 periods.append((
-                    weekend_start_utc,
-                    weekend_end_utc,
+                    period_start_utc,
+                    period_end_utc,
                     week_priority,
                     data_age_days
                 ))
                 print(f"     ⏰ Single period: {total_hours:.1f}h → 30-min granularity")
             else:
-                # Split into 2 periods of ~24 hours each with 1-hour granularity
-                mid_point = weekend_start_utc + timedelta(hours=24)
+                # Split into chunks of ~24 hours each
+                chunk_size_hours = 24
+                current_time = period_start_utc
+                chunk_count = 0
 
-                periods.extend([
-                    (weekend_start_utc, mid_point, week_priority, data_age_days),
-                    (mid_point, weekend_end_utc, week_priority, data_age_days)
-                ])
-                print(f"     ⏰ Period 1: 24.0h → 1-hour granularity")
-                print(
-                    f"     ⏰ Period 2: {(weekend_end_utc - mid_point).total_seconds() / 3600:.1f}h → 1-hour granularity")
+                while current_time < period_end_utc:
+                    chunk_end = min(
+                        current_time + timedelta(hours=chunk_size_hours),
+                        period_end_utc
+                    )
+
+                    periods.append((
+                        current_time,
+                        chunk_end,
+                        week_priority,
+                        data_age_days
+                    ))
+
+                    chunk_duration = (chunk_end - current_time).total_seconds() / 3600
+                    print(f"     ⏰ Period {chunk_count + 1}: {chunk_duration:.1f}h → 1-hour granularity")
+
+                    current_time = chunk_end
+                    chunk_count += 1
 
     print(f"\n📊 Collection Summary:")
     print(f"   Total periods: {len(periods)}")
@@ -518,7 +578,98 @@ def get_weekend_traffic_periods(weeks_back=12, focus_recent_weeks=True):
     return periods
 
 
-def collect_and_save_newrelic_data(api_key, app_id="1080863725", weeks_back=8, filename="newrelic_weekend_traffic.csv"):
+def get_weekday_business_hours_periods(weeks_back=12, focus_recent_weeks=True):
+    """
+    Get weekday business hours: Monday-Friday 8:00-18:00
+    """
+    return get_flexible_traffic_periods(
+        weeks_back=weeks_back,
+        focus_recent_weeks=focus_recent_weeks,
+        start_day=0,  # Monday
+        start_hour=8,
+        start_minute=0,
+        end_day=4,  # Friday
+        end_hour=18,
+        end_minute=0,
+        timezone_str='Asia/Ho_Chi_Minh'
+    )
+
+
+def get_full_weekend_periods(weeks_back=12, focus_recent_weeks=True):
+    """
+    Get full weekend: Saturday 00:00 to Sunday 23:59
+    """
+    return get_flexible_traffic_periods(
+        weeks_back=weeks_back,
+        focus_recent_weeks=focus_recent_weeks,
+        start_day=5,  # Saturday
+        start_hour=0,
+        start_minute=0,
+        end_day=6,  # Sunday
+        end_hour=23,
+        end_minute=59,
+        timezone_str='Asia/Ho_Chi_Minh'
+    )
+
+
+def get_peak_hours_periods(weeks_back=12, focus_recent_weeks=True):
+    """
+    Get daily peak hours: Every day 10:00-14:00 and 18:00-22:00
+    """
+    periods = []
+
+    # Morning peak: 10:00-14:00
+    morning_periods = get_flexible_traffic_periods(
+        weeks_back=weeks_back,
+        focus_recent_weeks=focus_recent_weeks,
+        start_day=0,  # Monday
+        start_hour=10,
+        start_minute=0,
+        end_day=6,  # Sunday (will wrap to next week)
+        end_hour=14,
+        end_minute=0,
+        timezone_str='Asia/Ho_Chi_Minh'
+    )
+
+    # Evening peak: 18:00-22:00
+    evening_periods = get_flexible_traffic_periods(
+        weeks_back=weeks_back,
+        focus_recent_weeks=focus_recent_weeks,
+        start_day=0,  # Monday
+        start_hour=18,
+        start_minute=0,
+        end_day=6,  # Sunday (will wrap to next week)
+        end_hour=22,
+        end_minute=0,
+        timezone_str='Asia/Ho_Chi_Minh'
+    )
+
+    return morning_periods + evening_periods
+
+
+# Backward compatibility - keep the original function name
+def get_weekend_traffic_periods(weeks_back=12, focus_recent_weeks=True):
+    """
+    DEPRECATED: Use get_flexible_traffic_periods instead
+    Get weekend traffic periods: Thursday 23:50 to Sunday 00:00 (GMT+7)
+    """
+    print("⚠️  DEPRECATED: get_weekend_traffic_periods() is deprecated.")
+    print("   Use get_flexible_traffic_periods() for more flexibility.")
+
+    return get_flexible_traffic_periods(
+        weeks_back=weeks_back,
+        focus_recent_weeks=focus_recent_weeks,
+        start_day=0,  # Monday
+        start_hour=0,
+        start_minute=0,
+        end_day=6,  # Sunday
+        end_hour=23,
+        end_minute=59,
+        timezone_str='Asia/Ho_Chi_Minh'
+    )
+
+
+def collect_and_save_newrelic_data(api_key, app_id="1080863725", weeks_back=3, filename="newrelic_weekend_traffic.csv"):
     """
     Collect weekend traffic data with focus on recent high-resolution data
 

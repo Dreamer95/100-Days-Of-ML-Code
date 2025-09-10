@@ -1,10 +1,10 @@
 Enhanced Weekend Traffic Data Collection Summary
 ===============================================
 
-Collection Date: 2025-08-06 11:45:47
+Collection Date: 2025-09-10 16:52:16
 Collection Strategy: Optimal granularity based on New Relic API rules
 Total Records: 576
-Time Range: 2025-05-16 00:00:00+07:00 to 2025-08-02 23:00:00+07:00
+Time Range: 2025-06-20 00:00:00+07:00 to 2025-09-06 23:00:00+07:00
 Weeks Collected: 12
 Weekend Periods: 12
 
