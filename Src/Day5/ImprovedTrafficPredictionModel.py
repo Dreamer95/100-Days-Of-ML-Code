@@ -168,13 +168,54 @@ class ImprovedTrafficPredictor:
         # ============ DOMAIN-SPECIFIC SAFE FEATURES ============
         print("🎯 Adding domain-specific features...")
 
-        # Push notification features (safe)
+        # Enhanced push notification features (safe)
         if 'push_notification_active' in df.columns:
             df['push_active'] = df['push_notification_active'].fillna(0)
 
         if 'minutes_since_push' in df.columns:
             df['minutes_since_push_safe'] = df['minutes_since_push'].fillna(9999)
             df['recent_push'] = (df['minutes_since_push_safe'] <= 60).astype(int)
+
+            # Enhanced push notification features for training
+            # Determine if time is in daytime effect window (7h-21h)
+            df['is_daytime_effect_window'] = ((df['hour'] >= 7) & (df['hour'] <= 21)).astype(int)
+            df['is_nighttime_no_effect'] = ((df['hour'] >= 1) & (df['hour'] <= 6)).astype(int)
+
+            # Calculate push effect multiplier based on time and decay
+            df['push_within_15min'] = (df['minutes_since_push_safe'] <= 15).astype(int)
+
+            # Push decay factor (exponential decay over 15 minutes)
+            df['push_decay_factor'] = np.where(
+                df['minutes_since_push_safe'] <= 15,
+                np.exp(-df['minutes_since_push_safe'] / 5.0),
+                0.0
+            )
+
+            # Push effect multiplier considering daytime vs nighttime
+            df['push_effect_multiplier'] = np.where(
+                (df['push_active'] == 1) | (df['minutes_since_push_safe'] <= 15),
+                np.where(
+                    df['is_daytime_effect_window'] == 1,
+                    # Daytime: strong effect with exponential decay
+                    np.where(
+                        df['minutes_since_push_safe'] <= 15,
+                        np.exp(-df['minutes_since_push_safe'] / 5.0),
+                        0.0
+                    ),
+                    np.where(
+                        df['is_nighttime_no_effect'] == 1,
+                        # Nighttime (1h-6h): no effect
+                        0.0,
+                        # Other hours: minimal effect
+                        np.where(
+                            df['minutes_since_push_safe'] <= 15,
+                            np.exp(-df['minutes_since_push_safe'] / 10.0) * 0.3,
+                            0.0
+                        )
+                    )
+                ),
+                0.0
+            )
 
         # Granularity features (safe)
         if 'interval_minutes' in df.columns:
@@ -1353,14 +1394,45 @@ class ImprovedTrafficPredictor:
             'month_cos': month_cos,
         }
 
-        # ============ PUSH NOTIFICATION FEATURES ============
+        # ============ ENHANCED PUSH NOTIFICATION FEATURES ============
         # Giới hạn trong khoảng hợp lý
         ms_push = max(0, min(int(minutes_since_push), 10000))
+
+        # Determine if current time is in daytime effect window (7h-21h)
+        is_daytime_effect_window = int(7 <= hour <= 21)
+        is_nighttime_no_effect = int(1 <= hour <= 6)
+
+        # Calculate push effect based on time and decay
+        push_effect_multiplier = 0.0
+        if push_notification_active or ms_push <= 15:  # Within 15 minutes of push
+            if is_daytime_effect_window:
+                # Daytime: strong initial effect that decays over 15 minutes
+                if ms_push <= 15:
+                    # Exponential decay over 15 minutes
+                    decay_factor = np.exp(-ms_push / 5.0)  # Decay with 5-minute half-life
+                    push_effect_multiplier = decay_factor
+                else:
+                    push_effect_multiplier = 0.0
+            elif is_nighttime_no_effect:
+                # Nighttime (1h-6h): no effect
+                push_effect_multiplier = 0.0
+            else:
+                # Other hours: minimal effect
+                if ms_push <= 15:
+                    decay_factor = np.exp(-ms_push / 10.0)  # Slower decay
+                    push_effect_multiplier = decay_factor * 0.3  # Reduced effect
+                else:
+                    push_effect_multiplier = 0.0
 
         base_features.update({
             'push_active': int(push_notification_active),
             'minutes_since_push_safe': ms_push,
             'recent_push': int(ms_push <= 60),
+            'is_daytime_effect_window': is_daytime_effect_window,
+            'is_nighttime_no_effect': is_nighttime_no_effect,
+            'push_effect_multiplier': push_effect_multiplier,
+            'push_within_15min': int(ms_push <= 15),
+            'push_decay_factor': np.exp(-ms_push / 5.0) if ms_push <= 15 else 0.0,
         })
 
         # Response time features
@@ -1504,15 +1576,40 @@ class ImprovedTrafficPredictor:
                     # Ensure non-negative prediction
                     pred = max(0.0, float(pred))
 
-                    # Create predictions for each horizon (simulation)
-                    # Since we only have one model, we'll simulate different horizons
+                    # Create predictions for each horizon with enhanced push notification effects
                     for minutes in minutes_ahead:
                         # Apply time decay factor for longer horizons
                         decay_factor = 1.0 - (minutes - 5) * 0.02  # 2% decay per minute after 5min
                         decay_factor = max(0.8, decay_factor)  # Minimum 80% confidence
 
-                        horizon_pred = pred * decay_factor
-                        predictions[f'tpm_{minutes}min'] = horizon_pred
+                        # Calculate push effect for this specific horizon
+                        future_minutes_since_push = ms_push + minutes
+                        horizon_push_effect = 0.0
+
+                        if push_notification_active or future_minutes_since_push <= 15:
+                            if is_daytime_effect_window:
+                                # Daytime: strong effect that decays over 15 minutes
+                                if future_minutes_since_push <= 15:
+                                    horizon_push_decay = np.exp(-future_minutes_since_push / 5.0)
+                                    # Push effect increases TPM by 20-80% depending on decay
+                                    horizon_push_effect = horizon_push_decay * 0.6  # Max 60% increase
+                                else:
+                                    horizon_push_effect = 0.0
+                            elif not is_nighttime_no_effect:
+                                # Other hours: minimal effect
+                                if future_minutes_since_push <= 15:
+                                    horizon_push_decay = np.exp(-future_minutes_since_push / 10.0)
+                                    horizon_push_effect = horizon_push_decay * 0.2  # Max 20% increase
+                                else:
+                                    horizon_push_effect = 0.0
+                            # Nighttime (1h-6h): no effect (horizon_push_effect remains 0.0)
+
+                        # Apply both decay factor and push effect
+                        base_pred = pred * decay_factor
+                        push_boost = base_pred * horizon_push_effect
+                        horizon_pred = base_pred + push_boost
+
+                        predictions[f'tpm_{minutes}min'] = max(0.0, horizon_pred)
 
                     prediction_details[target] = {
                         'model': best_model_name,
@@ -1553,6 +1650,126 @@ class ImprovedTrafficPredictor:
         print(f"   🏷️ Labels: {labels}")
 
         return results
+
+    def predict_from_3hour_history(self, 
+                                   current_time: datetime,
+                                   historical_data: pd.DataFrame,
+                                   minutes_ahead: tuple = (5, 10, 15)):
+        """
+        Predict TPM for the next 5, 10, 15 minutes based on real data from the previous 3 hours.
+
+        Args:
+            current_time: Current timestamp for prediction
+            historical_data: DataFrame with columns ['timestamp', 'tpm', 'response_time', 'push_notification_active', 'minutes_since_push']
+                            containing data from the previous 3 hours
+            minutes_ahead: Tuple of minutes to predict ahead
+
+        Returns:
+            dict: Prediction results with enhanced push notification effects
+        """
+        if historical_data.empty:
+            raise ValueError("❌ Historical data cannot be empty")
+
+        # Sort data by timestamp
+        historical_data = historical_data.sort_values('timestamp').reset_index(drop=True)
+
+        # Get the most recent data point
+        latest_data = historical_data.iloc[-1]
+        current_tpm = latest_data['tpm']
+
+        # Extract previous TPM values (up to last 24 data points for comprehensive history)
+        tpm_values = historical_data['tpm'].tolist()
+        previous_tpms = tpm_values[:-1][-24:] if len(tpm_values) > 1 else []
+
+        # Get push notification info
+        push_active = int(latest_data.get('push_notification_active', 0))
+        minutes_since_push = int(latest_data.get('minutes_since_push', 999999))
+
+        # Get response time if available
+        response_time = latest_data.get('response_time', None)
+
+        print(f"🕐 Predicting from 3-hour history at {current_time}")
+        print(f"   Historical data points: {len(historical_data)}")
+        print(f"   Current TPM: {current_tpm}")
+        print(f"   Push active: {push_active}, Minutes since: {minutes_since_push}")
+
+        # Use the enhanced predict_from_inputs method
+        return self.predict_from_inputs(
+            when=current_time,
+            current_tpm=current_tpm,
+            previous_tpms=previous_tpms,
+            response_time=response_time,
+            push_notification_active=push_active,
+            minutes_since_push=minutes_since_push,
+            minutes_ahead=minutes_ahead
+        )
+
+    def predict_from_tpm_list_with_push_events(self,
+                                               current_time: datetime,
+                                               tpm_chronological_list: list,
+                                               push_events: list,
+                                               minutes_ahead: tuple = (5, 10, 15),
+                                               response_time: float = None):
+        """
+        Predict TPM for the next 5, 10, 15 minutes based on chronological TPM list and push events.
+
+        Args:
+            current_time: Current timestamp for prediction
+            tpm_chronological_list: List of TPM values in chronological order [oldest, ..., newest]
+            push_events: List of push event timestamps (datetime objects) or 
+                        list of dicts with {'timestamp': datetime, 'active': bool}
+            minutes_ahead: Tuple of minutes to predict ahead
+            response_time: Optional current response time
+
+        Returns:
+            dict: Prediction results with enhanced push notification effects
+        """
+        if not tpm_chronological_list:
+            raise ValueError("❌ TPM list cannot be empty")
+
+        current_tpm = tpm_chronological_list[-1]
+        previous_tpms = tpm_chronological_list[:-1][-24:] if len(tpm_chronological_list) > 1 else []
+
+        # Process push events to determine current push status
+        push_active = 0
+        minutes_since_push = 999999
+
+        if push_events:
+            # Handle different push event formats
+            push_timestamps = []
+
+            for event in push_events:
+                if isinstance(event, datetime):
+                    push_timestamps.append(event)
+                elif isinstance(event, dict) and 'timestamp' in event:
+                    if event.get('active', True):  # Only consider active push events
+                        push_timestamps.append(event['timestamp'])
+
+            if push_timestamps:
+                # Find the most recent push event
+                recent_push = max(push_timestamps)
+                time_diff = current_time - recent_push
+                minutes_since_push = int(time_diff.total_seconds() / 60)
+
+                # Consider push active if it happened within the last minute
+                push_active = 1 if minutes_since_push <= 1 else 0
+
+        print(f"🎯 Predicting from TPM list with push events at {current_time}")
+        print(f"   TPM values count: {len(tpm_chronological_list)}")
+        print(f"   Current TPM: {current_tpm}")
+        print(f"   Push events count: {len(push_events) if push_events else 0}")
+        print(f"   Push active: {push_active}, Minutes since: {minutes_since_push}")
+
+        # Use the enhanced predict_from_inputs method
+        return self.predict_from_inputs(
+            when=current_time,
+            current_tpm=current_tpm,
+            previous_tpms=previous_tpms,
+            response_time=response_time,
+            push_notification_active=push_active,
+            minutes_since_push=minutes_since_push,
+            minutes_ahead=minutes_ahead
+        )
 
     def demo_manual_predictions(self):
         """Demo predictions với input thủ công"""
