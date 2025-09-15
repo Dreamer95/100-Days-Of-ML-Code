@@ -378,6 +378,10 @@ def simulate_realistic_push_notification_campaigns(df):
 
     # Define realistic campaign patterns
     campaigns = [
+        # Sleeping hours campaigns - zero effect for training purposes
+        {'hour': 3, 'minute': 0, 'intensity': 0.0, 'type': 'sleeping_hours_early', 'duration': 10},
+        {'hour': 5, 'minute': 0, 'intensity': 0.0, 'type': 'sleeping_hours_late', 'duration': 10},
+
         {'hour': 8, 'minute': 0, 'intensity': 0.8, 'type': 'morning_commute', 'duration': 15},
         {'hour': 12, 'minute': 0, 'intensity': 1.2, 'type': 'lunch_peak', 'duration': 20},
         {'hour': 15, 'minute': 30, 'intensity': 0.9, 'type': 'afternoon_break', 'duration': 12},
@@ -412,8 +416,8 @@ def simulate_realistic_push_notification_campaigns(df):
                         df.loc[future_idx, 'push_intensity'] = current_intensity
 
                         # Apply traffic boost
-                        boost = current_intensity * 0.25  # Up to 25% boost
-                        df.loc[future_idx, 'tpm'] *= (1 + boost)
+                        # boost = current_intensity * 0.25  # Up to 25% boost
+                        # df.loc[future_idx, 'tpm'] *= (1 + boost)
                 break
 
     return df

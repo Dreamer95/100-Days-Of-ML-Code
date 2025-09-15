@@ -597,6 +597,432 @@ class EnhancedDemoPredictor:
             'is_weekend': [(ts.weekday() >= 5) for ts in timestamps]
         })
 
+    def predict_from_custom_input(self,
+                                  current_time,
+                                  historical_tpm_values,
+                                  current_response_time=150.0,
+                                  push_event_active=False,
+                                  minutes_since_last_push=999,
+                                  push_campaign_type='none',
+                                  minutes_ahead=(5, 10, 15)):
+        """
+        Dự đoán TPM từ custom input parameters
+
+        Parameters:
+        -----------
+        current_time : str hoặc datetime
+            Thời gian hiện tại (ví dụ: '2024-01-15 14:30:00' hoặc datetime object)
+        historical_tpm_values : list hoặc float
+            TPM values trong quá khứ. Có thể là:
+            - List các giá trị TPM (ví dụ: [100, 120, 150, 180, 200])
+            - Single value (sẽ generate pattern từ giá trị này)
+        current_response_time : float
+            Response time hiện tại (ms), default 150.0
+        push_event_active : bool
+            Có push notification đang active không, default False
+        minutes_since_last_push : int
+            Số phút từ lần push cuối, default 999 (rất lâu)
+        push_campaign_type : str
+            Loại campaign ('morning_commute', 'lunch_peak', 'evening_commute', etc.)
+        minutes_ahead : tuple
+            Thời gian dự đoán (5, 10, 15), default (5, 10, 15)
+
+        Returns:
+        --------
+        dict
+            Kết quả dự đoán với structure tương tự predict_next_tpm_from_3h_data()
+
+        Examples:
+        ---------
+        # Ví dụ 1: Với historical TPM values
+        results = predictor.predict_from_custom_input(
+            current_time='2024-01-15 14:30:00',
+            historical_tpm_values=[100, 120, 150, 180, 200, 220],
+            push_event_active=True,
+            minutes_since_last_push=2
+        )
+
+        # Ví dụ 2: Với single TPM value
+        results = predictor.predict_from_custom_input(
+            current_time=datetime.now(),
+            historical_tpm_values=350,  # Single value
+            push_event_active=False,
+            minutes_since_last_push=45
+        )
+        """
+
+        if not self.is_loaded:
+            raise ValueError("❌ Model chưa được load. Hãy gọi load_latest_trained_model() trước.")
+
+        print(f"🔮 Custom Input Prediction")
+        print(f"=" * 50)
+
+        # Convert current_time to datetime if string
+        if isinstance(current_time, str):
+            current_time = pd.to_datetime(current_time)
+
+        print(f"📅 Input Parameters:")
+        print(f"   Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"   Historical TPM: {historical_tpm_values}")
+        print(f"   Response Time: {current_response_time:.1f}ms")
+        print(f"   Push Active: {push_event_active}")
+        print(f"   Minutes Since Push: {minutes_since_last_push}")
+        print(f"   Campaign Type: {push_campaign_type}")
+
+        try:
+            # Create historical DataFrame from input
+            historical_df = self._create_historical_dataframe_from_input(
+                current_time=current_time,
+                tpm_values=historical_tpm_values,
+                current_response_time=current_response_time,
+                push_active=push_event_active,
+                minutes_since_push=minutes_since_last_push,
+                campaign_type=push_campaign_type
+            )
+
+            print(f"📊 Generated {len(historical_df)} historical data points")
+
+            # Use existing prediction method
+            results = self.predict_next_tpm_from_3h_data(historical_df, minutes_ahead)
+
+            if results:
+                print(f"\n🎯 CUSTOM PREDICTION RESULTS:")
+                current = results['current_values']
+                predictions = results['predictions']
+                labels = results['labels']
+
+                print(f"   Base TPM: {current['tpm']:.1f}")
+                # print(f"   Push Status: {'Active' if current['push_active'] else f'{current['minutes_since_push']} min ago'}")
+                print(f"\n📈 Predictions:")
+
+                for horizon in minutes_ahead:
+                    key = f'tpm_{horizon}min'
+                    pred_val = predictions[key]
+                    label = labels[key]
+                    change_pct = ((pred_val - current['tpm']) / current['tpm'] * 100) if current['tpm'] > 0 else 0
+                    print(f"   {horizon:>2} min: {pred_val:>6.1f} ({label:<10}) [{change_pct:>+5.1f}%]")
+
+                    # Add input summary to results
+                    results['input_summary'] = {
+                    'input_time': current_time,
+                    'input_tpm_type': 'list' if isinstance(historical_tpm_values, list) else 'single',
+                    'input_push_active': push_event_active,
+                    'input_minutes_since_push': minutes_since_last_push,
+                    'input_campaign_type': push_campaign_type,
+                    'generated_data_points': len(historical_df)
+                    }
+
+                return results
+            else:
+                print("❌ Không thể tạo predictions từ custom input")
+                return None
+
+        except Exception as e:
+            print(f"❌ Error in custom prediction: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _create_historical_dataframe_from_input(self,
+                                                current_time,
+                                                tpm_values,
+                                                current_response_time,
+                                                push_active,
+                                                minutes_since_push,
+                                                campaign_type):
+        """
+        Tạo historical DataFrame từ custom input
+
+        Parameters:
+        -----------
+        current_time : datetime
+            Thời gian hiện tại
+        tpm_values : list hoặc float
+            TPM values hoặc base value
+        current_response_time : float
+            Response time hiện tại
+        push_active : bool
+            Push notification active
+        minutes_since_push : int
+            Minutes since last push
+        campaign_type : str
+            Campaign type
+
+        Returns:
+        --------
+        pd.DataFrame
+            Historical DataFrame for prediction
+        """
+
+        # Determine how many data points to generate (3 hours = 180 minutes)
+        data_points = 180  # 1 minute intervals for 3 hours
+
+        timestamps = []
+        tpm_hist = []
+        response_times = []
+        push_actives = []
+        minutes_since_pushes = []
+        campaign_types = []
+
+        # Generate timestamps (3 hours back to current)
+        start_time = current_time - timedelta(hours=3)
+
+        for i in range(data_points):
+            timestamp = start_time + timedelta(minutes=i)
+            timestamps.append(timestamp)
+
+            # Handle TPM values
+            if isinstance(tpm_values, (list, tuple, np.ndarray)):
+                # If list provided, interpolate/extrapolate
+                if len(tpm_values) == 1:
+                    base_tpm = tpm_values[0]
+                else:
+                    # Use the values as trend points
+                    if i < len(tpm_values):
+                        base_tpm = tpm_values[i]
+                    else:
+                        # Extrapolate from trend
+                        if len(tpm_values) >= 2:
+                            trend = tpm_values[-1] - tpm_values[-2]
+                            base_tpm = tpm_values[-1] + trend * (i - len(tpm_values) + 1)
+                        else:
+                            base_tpm = tpm_values[-1]
+            else:
+                # Single value - create realistic pattern
+                base_tpm = float(tpm_values)
+
+                # Add time-based variation
+                hour_factor = np.sin((timestamp.hour - 6) / 24 * 2 * np.pi) * 0.3
+                minute_factor = np.sin(i / 30) * 0.1  # Small oscillations
+                base_tpm = base_tpm * (1 + hour_factor + minute_factor)
+
+            # Add some noise
+            tpm_with_noise = base_tpm + np.random.normal(0, base_tpm * 0.05)  # 5% noise
+            tpm_with_noise = max(10, tpm_with_noise)  # Minimum 10 TPM
+            tpm_hist.append(tpm_with_noise)
+
+            # Response time (inversely correlated with TPM)
+            if i == data_points - 1:
+                # Use provided response time for current moment
+                response_times.append(current_response_time)
+            else:
+                # Calculate based on TPM correlation
+                base_rt = current_response_time
+                tpm_factor = (tpm_with_noise / tpm_hist[-1]) if len(tpm_hist) > 0 else 1.0
+                rt = base_rt / tpm_factor + np.random.normal(0, 10)
+                rt = max(50, min(500, rt))  # Clamp between 50-500ms
+                response_times.append(rt)
+
+            # Handle push notifications
+            current_minutes_since = minutes_since_push + (data_points - 1 - i)
+
+            if i == data_points - 1:
+                # Current moment
+                push_actives.append(1 if push_active else 0)
+                minutes_since_pushes.append(minutes_since_push)
+                campaign_types.append(campaign_type if push_active else 'none')
+            else:
+                # Historical points
+                if push_active and current_minutes_since <= 0:
+                    # Push was active in the past
+                    push_actives.append(1)
+                    minutes_since_pushes.append(0)
+                    campaign_types.append(campaign_type)
+                else:
+                    push_actives.append(0)
+                    minutes_since_pushes.append(max(0, current_minutes_since))
+                    campaign_types.append('none')
+
+        # Create DataFrame
+        df = pd.DataFrame({
+            'timestamp': timestamps,
+            'tpm': tpm_hist,
+            'response_time': response_times,
+            'push_notification_active': push_actives,
+            'minutes_since_push': minutes_since_pushes,
+            'push_campaign_type': campaign_types
+        })
+
+        # Add basic time features
+        df['hour'] = df['timestamp'].dt.hour
+        df['minute'] = df['timestamp'].dt.minute
+        df['day_of_week'] = df['timestamp'].dt.dayofweek
+        df['is_weekend'] = (df['day_of_week'] >= 5).astype(int)
+
+        return df
+
+    def demo_custom_input_predictions(self):
+        """
+        Demo function để test custom input predictions
+        """
+
+        if not self.is_loaded:
+            print("❌ Model chưa được load. Hãy gọi load_latest_trained_model() trước.")
+            return
+
+        print("\n🎯 DEMO: Custom Input Predictions")
+        print("=" * 60)
+
+        # Test scenarios
+        test_scenarios = [
+            {
+                'name': 'Morning Peak với Push Active',
+                'current_time': '2024-01-15 09:30:00',
+                'historical_tpm': [200, 250, 300, 350, 400, 450],
+                'response_time': 120.0,
+                'push_active': True,
+                'minutes_since_push': 2,
+                'campaign_type': 'morning_commute'
+            },
+            {
+                'name': 'Lunch Time không có Push',
+                'current_time': '2024-01-15 12:15:00',
+                'historical_tpm': 180,  # Single value
+                'response_time': 200.0,
+                'push_active': False,
+                'minutes_since_push': 45,
+                'campaign_type': 'none'
+            },
+            {
+                'name': 'Evening Rush với Push cách đây 10 phút',
+                'current_time': '2024-01-15 18:00:00',
+                'historical_tpm': [800, 820, 850, 900, 920, 950, 980],
+                'response_time': 90.0,
+                'push_active': False,
+                'minutes_since_push': 10,
+                'campaign_type': 'evening_commute'
+            },
+            {
+                'name': 'Night Time với Push không hiệu quả',
+                'current_time': '2024-01-16 02:30:00',
+                'historical_tpm': [50, 45, 40, 35, 30, 35],
+                'response_time': 300.0,
+                'push_active': True,
+                'minutes_since_push': 1,
+                'campaign_type': 'sleeping_hours_early'
+            }
+        ]
+
+        for i, scenario in enumerate(test_scenarios, 1):
+            print(f"\n{i}. {scenario['name']}")
+            print("-" * 40)
+
+            try:
+                results = self.predict_from_custom_input(
+                    current_time=scenario['current_time'],
+                    historical_tpm_values=scenario['historical_tpm'],
+                    current_response_time=scenario['response_time'],
+                    push_event_active=scenario['push_active'],
+                    minutes_since_last_push=scenario['minutes_since_push'],
+                    push_campaign_type=scenario['campaign_type']
+                )
+
+                if results:
+                    # Summary for quick comparison
+                    preds = results['predictions']
+                    print(
+                        f"   📊 Quick Summary: 5min={preds['tpm_5min']:.0f}, 10min={preds['tpm_10min']:.0f}, 15min={preds['tpm_15min']:.0f}")
+
+            except Exception as e:
+                print(f"   ❌ Error: {e}")
+
+        print(f"\n✅ Custom input demo completed!")
+
+    def compare_custom_push_scenarios(self,
+                                      current_time,
+                                      historical_tpm_values,
+                                      current_response_time=150.0,
+                                      minutes_since_last_push=999,
+                                      push_campaign_type='morning_commute',
+                                      minutes_ahead=(5, 10, 15)):
+        """
+        So sánh scenarios có/không có push notification từ custom input
+
+        Parameters tương tự predict_from_custom_input() nhưng không có push_event_active
+        (sẽ test cả 2 trường hợp)
+        """
+
+        if not self.is_loaded:
+            raise ValueError("❌ Model chưa được load.")
+
+        print(f"\n🔄 Custom Push Scenarios Comparison")
+        print(f"=" * 50)
+
+        # Scenario 1: No Push
+        print("📊 Scenario 1: No Push Notification")
+        results_no_push = self.predict_from_custom_input(
+            current_time=current_time,
+            historical_tpm_values=historical_tpm_values,
+            current_response_time=current_response_time,
+            push_event_active=False,
+            minutes_since_last_push=minutes_since_last_push,
+            push_campaign_type='none',
+            minutes_ahead=minutes_ahead
+        )
+
+        # Scenario 2: With Push
+        print("\n📊 Scenario 2: With Push Notification (active now)")
+        results_with_push = self.predict_from_custom_input(
+            current_time=current_time,
+            historical_tpm_values=historical_tpm_values,
+            current_response_time=current_response_time,
+            push_event_active=True,
+            minutes_since_last_push=0,  # Just sent
+            push_campaign_type=push_campaign_type,
+            minutes_ahead=minutes_ahead
+        )
+
+        if not results_no_push or not results_with_push:
+            print("❌ Failed to generate comparison results")
+            return None
+
+        # Calculate comparison
+        comparison = {
+            'no_push': results_no_push,
+            'with_push': results_with_push,
+            'differences': {},
+            'percentage_changes': {},
+            'label_changes': {}
+        }
+
+        print(f"\n🎯 CUSTOM COMPARISON RESULTS:")
+        print(f"{'Horizon':<8} {'No Push':<8} {'With Push':<9} {'Diff':<6} {'Change':<8} {'Labels'}")
+        print("-" * 55)
+
+        total_boost = 0
+        for minutes in minutes_ahead:
+            key = f'tpm_{minutes}min'
+            no_push_val = results_no_push['predictions'][key]
+            with_push_val = results_with_push['predictions'][key]
+
+            diff = with_push_val - no_push_val
+            pct_change = (diff / no_push_val * 100) if no_push_val > 0 else 0
+            total_boost += pct_change
+
+            no_push_label = results_no_push['labels'][key]
+            with_push_label = results_with_push['labels'][key]
+
+            comparison['differences'][key] = diff
+            comparison['percentage_changes'][key] = pct_change
+            comparison['label_changes'][key] = {
+                'no_push': no_push_label,
+                'with_push': with_push_label,
+                'changed': no_push_label != with_push_label
+            }
+
+            print(
+                f"{minutes:>2}min    {no_push_val:>6.1f}   {with_push_val:>7.1f}   {diff:>+5.1f}   {pct_change:>+5.1f}%   {no_push_label} → {with_push_label}")
+
+        avg_boost = total_boost / len(minutes_ahead)
+        max_boost = max(comparison['percentage_changes'].values())
+
+        print(f"\n📈 PUSH IMPACT ANALYSIS:")
+        print(f"   Average boost: {avg_boost:+.1f}%")
+        print(f"   Maximum boost: {max_boost:+.1f}%")
+        print(f"   Campaign type: {push_campaign_type}")
+
+        return comparison
+
 
 def main():
     """
@@ -623,8 +1049,18 @@ def main():
             # Demo 1: Real-time prediction
             predictor.demo_real_time_prediction()
 
+            # Demo 2: Custom push comparison
+            print("\n🔄 Custom Push Comparison Demo:")
+            predictor.compare_custom_push_scenarios(
+                current_time='2024-01-15 15:30:00',
+                historical_tpm_values=[300, 350, 400, 450, 500],
+                current_response_time=130.0,
+                minutes_since_last_push=30,
+                push_campaign_type='afternoon_break'
+            )
+
             # Demo 2: Multiple scenarios
-            predictor.demo_multiple_scenarios()
+            # predictor.demo_multiple_scenarios()
 
             print(f"\n🎉 All enhanced demos completed successfully!")
             print(f"🔧 Key Features Demonstrated:")
