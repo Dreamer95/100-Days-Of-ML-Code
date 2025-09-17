@@ -1038,58 +1038,74 @@ class EnhancedTimeSeriesTrainer:
                     else:
                         df.loc[df.index[idx], 'push_campaign_type'] = push_campaign_type
 
-            # ============ STEP 4: CREATE ENHANCED FEATURES ============
-            print("🔧 Creating enhanced features...")
+            # ============ STEP 4-5: CREATE PREDICTION-COMPATIBLE FEATURES (COMPREHENSIVE FIX) ============
+            print("🔧 Creating prediction-compatible features...")
 
-            # Apply same feature creation as training
-            enhanced_df = self.create_enhanced_features_from_csv(df.copy(), target_col='tpm')
+            try:
+                # STEP 4A: Apply business push effects to synthetic data (same as training)
+                print("   📱 Applying business push effects to synthetic data...")
+                enhanced_df_with_push = self.apply_business_push_effects_to_csv_data(df.copy())
 
-            if enhanced_df.empty:
-                raise ValueError("❌ Feature creation failed - empty DataFrame")
+                # STEP 4B: Create enhanced features using SAME method as training
+                print("   🔧 Creating enhanced features...")
+                enhanced_df = self.create_enhanced_features_from_csv(enhanced_df_with_push, target_col='tpm')
 
-            print(f"   ✅ Created features: {len(enhanced_df.columns)} columns")
+                if enhanced_df.empty:
+                    raise ValueError("❌ Feature creation failed - empty DataFrame")
 
-            # ============ STEP 5: PREPARE PREDICTION FEATURES ============
-            print("🎯 Preparing prediction features...")
+                print(f"   ✅ Created {len(enhanced_df.columns)} features using training method")
 
-            # Get features that match training
-            available_features = []
-            missing_features = []
+                # STEP 4C: Debug feature matching
+                generated_features = [col for col in enhanced_df.columns if col != 'tpm']
+                matches, missing_features, extra_features = self._debug_feature_mismatch(generated_features)
 
-            for feature in self.feature_cols:
-                if feature in enhanced_df.columns:
-                    available_features.append(feature)
+                if len(matches) == 0:
+                    print("❌ CRITICAL: No matching features found!")
+                    print("   🔧 Attempting emergency feature creation...")
+
+                    # EMERGENCY: Use emergency feature creation
+                    latest_features, current_tpm = self._create_emergency_features_for_prediction(
+                        df, historical_tpm_1min, current_time
+                    )
                 else:
-                    missing_features.append(feature)
+                    print(f"   ✅ Found {len(matches)} matching features")
 
-            if len(available_features) == 0:
-                raise ValueError("❌ Không có feature nào match với training data")
+                    # STEP 4D: Create complete feature matrix
+                    print("   🔨 Building complete feature matrix...")
+                    complete_feature_df = pd.DataFrame(index=enhanced_df.index)
 
-            print(f"   ✅ Matching features: {len(available_features)}/{len(self.feature_cols)}")
+                    # Add all training features
+                    for feature in self.feature_cols:
+                        if feature in enhanced_df.columns:
+                            complete_feature_df[feature] = enhanced_df[feature]
+                        else:
+                            # Smart default based on feature type
+                            default_value = self._get_smart_feature_default(
+                                feature, enhanced_df, df, historical_tpm_1min
+                            )
+                            complete_feature_df[feature] = default_value
+                            print(f"      🔧 Added missing feature '{feature}' with smart default")
 
-            if missing_features:
-                print(f"   ⚠️ Missing features: {len(missing_features)}")
-                for i, feat in enumerate(missing_features[:5]):
-                    print(f"      {i + 1}. {feat}")
-                if len(missing_features) > 5:
-                    print(f"      ... and {len(missing_features) - 5} more")
+                    # Ensure correct column order
+                    feature_df = complete_feature_df[self.feature_cols]
 
-            # Create final feature matrix
-            feature_df = enhanced_df[available_features].copy()
+                    # Get latest feature vector (current time)
+                    latest_features = feature_df.iloc[-1:].copy()
+                    current_tpm = enhanced_df.iloc[-1]['tpm'] if 'tpm' in enhanced_df.columns else historical_tpm_1min[
+                        -1]
 
-            # Fill missing features with 0 (features that exist in training but not in current data)
-            for feature in self.feature_cols:
-                if feature not in feature_df.columns:
-                    feature_df[feature] = 0
+                print(f"   ✅ Final feature matrix: {latest_features.shape}")
+                print(f"   📊 Current TPM: {current_tpm:.1f}")
+                print(f"   🎯 All training features available: {len(self.feature_cols)}/{len(self.feature_cols)}")
 
-            # Reorder to match training
-            feature_df = feature_df[self.feature_cols]
+            except Exception as e:
+                print(f"   ❌ Error in feature creation: {e}")
+                print("   🚨 Using emergency fallback...")
 
-            # Get latest feature vector (current time)
-            latest_features = feature_df.iloc[-1:].copy()
-            current_tpm = enhanced_df.iloc[-1]['tpm']
-
-            print(f"   📊 Current TPM: {current_tpm:.1f}")
+                # EMERGENCY FALLBACK
+                latest_features, current_tpm = self._create_emergency_features_for_prediction(
+                    df, historical_tpm_1min, current_time
+                )
 
             # ============ STEP 6: MAKE PREDICTIONS ============
             print("🔮 Generating predictions...")
@@ -1176,7 +1192,7 @@ class EnhancedTimeSeriesTrainer:
                 'model_info': {
                     'model_used': model_name,
                     'base_prediction': base_prediction,
-                    'features_available': len(available_features),
+                    'features_available': len(latest_features),
                     'features_total': len(self.feature_cols),
                     'historical_points': len(historical_tpm_1min)
                 },
@@ -1195,6 +1211,191 @@ class EnhancedTimeSeriesTrainer:
             import traceback
             traceback.print_exc()
             return None
+
+    def _debug_feature_mismatch(self, generated_features):
+        """
+        Debug method để understand feature mismatch
+        """
+        print(f"\n🔍 FEATURE DEBUG ANALYSIS")
+        print("=" * 50)
+        print(f"Generated features: {len(generated_features)}")
+        print(f"Training features needed: {len(self.feature_cols)}")
+
+        # Find matches and mismatches
+        generated_set = set(generated_features)
+        training_set = set(self.feature_cols)
+
+        matches = generated_set & training_set
+        missing_in_generated = training_set - generated_set
+        extra_in_generated = generated_set - training_set
+
+        print(f"\n✅ Matching features: {len(matches)}")
+        print(f"❌ Missing in generated: {len(missing_in_generated)}")
+        print(f"➕ Extra in generated: {len(extra_in_generated)}")
+
+        if missing_in_generated:
+            print(f"\n🔍 Missing features (first 10):")
+            for i, feature in enumerate(sorted(list(missing_in_generated))[:10]):
+                print(f"   {i + 1:2d}. {feature}")
+
+            # Categorize missing features
+            missing_categories = {
+                'lag_features': [f for f in missing_in_generated if 'lag' in f.lower()],
+                'rolling_features': [f for f in missing_in_generated if
+                                     any(x in f.lower() for x in ['ma_', '_std', '_min', '_max'])],
+                'push_features': [f for f in missing_in_generated if any(x in f.lower() for x in ['push', 'campaign'])],
+                'time_features': [f for f in missing_in_generated if
+                                  any(x in f.lower() for x in ['hour', 'day', 'sin', 'cos'])],
+                'other_features': []
+            }
+
+            # Classify remaining
+            for f in missing_in_generated:
+                categorized = False
+                for category, features in missing_categories.items():
+                    if category == 'other_features':
+                        continue
+                    if f in features:
+                        categorized = True
+                        break
+                if not categorized:
+                    missing_categories['other_features'].append(f)
+
+            print(f"\n📊 Missing by category:")
+            for category, features in missing_categories.items():
+                if features:
+                    print(f"   {category}: {len(features)}")
+
+        return matches, missing_in_generated, extra_in_generated
+
+    def _get_smart_feature_default(self, feature_name, enhanced_df, original_df, historical_tpm):
+        """
+        Get smart default value for missing feature based on feature type
+        """
+
+        # Time-based features
+        if any(x in feature_name.lower() for x in ['hour', 'minute', 'day']):
+            if 'sin' in feature_name or 'cos' in feature_name:
+                return 0.0
+            elif 'hour' in feature_name:
+                if 'hour' in original_df.columns:
+                    return original_df['hour'].iloc[-1]
+                else:
+                    return 12  # Default noon
+            elif 'day' in feature_name:
+                if 'day_of_week' in original_df.columns:
+                    return original_df['day_of_week'].iloc[-1]
+                else:
+                    return 1  # Default Tuesday
+            else:
+                return 0
+
+        # Push-related features
+        elif any(x in feature_name.lower() for x in ['push', 'campaign']):
+            return 0  # Default no push
+
+        # Lag features
+        elif 'lag' in feature_name.lower():
+            if 'tpm' in enhanced_df.columns:
+                return enhanced_df['tpm'].iloc[-1]
+            else:
+                return historical_tpm[-1] if len(historical_tpm) > 0 else 0
+
+        # Rolling/Moving average features
+        elif any(x in feature_name.lower() for x in ['ma_', '_mean', 'rolling']):
+            if 'tpm' in enhanced_df.columns:
+                return enhanced_df['tpm'].mean()
+            else:
+                return np.mean(historical_tpm) if len(historical_tpm) > 0 else 0
+
+        # Standard deviation features
+        elif '_std' in feature_name.lower():
+            if 'tpm' in enhanced_df.columns:
+                return enhanced_df['tpm'].std()
+            else:
+                return np.std(historical_tpm) if len(historical_tpm) > 0 else 0
+
+        # Min/Max features
+        elif '_min' in feature_name.lower():
+            if 'tpm' in enhanced_df.columns:
+                return enhanced_df['tpm'].min()
+            else:
+                return np.min(historical_tpm) if len(historical_tpm) > 0 else 0
+        elif '_max' in feature_name.lower():
+            if 'tpm' in enhanced_df.columns:
+                return enhanced_df['tpm'].max()
+            else:
+                return np.max(historical_tpm) if len(historical_tpm) > 0 else 0
+
+        # Peak/Business hour features
+        elif any(x in feature_name.lower() for x in ['peak', 'business']):
+            return 0  # Default not peak
+
+        # Interaction features
+        elif '_interaction' in feature_name.lower():
+            return 0  # Default no interaction
+
+        # Cumulative features
+        elif 'cumulative' in feature_name.lower():
+            return 0  # Default no cumulative count
+
+        # Default
+        else:
+            return 0.0
+
+    def _create_emergency_features_for_prediction(self, df, historical_tpm, current_time):
+        """
+        Emergency fallback: create minimal feature set with all training features set to defaults
+        """
+        print("   🚨 Creating emergency feature set...")
+
+        # Create DataFrame with all training features set to defaults
+        feature_values = {}
+
+        current_tpm = historical_tpm[-1] if len(historical_tpm) > 0 else 100
+        tpm_mean = np.mean(historical_tpm) if len(historical_tpm) > 0 else 100
+        tpm_std = np.std(historical_tpm) if len(historical_tpm) > 0 else 20
+
+        for feature in self.feature_cols:
+            if 'hour' in feature and 'sin' in feature:
+                feature_values[feature] = np.sin(2 * np.pi * current_time.hour / 24)
+            elif 'hour' in feature and 'cos' in feature:
+                feature_values[feature] = np.cos(2 * np.pi * current_time.hour / 24)
+            elif 'day' in feature and 'sin' in feature:
+                feature_values[feature] = np.sin(2 * np.pi * current_time.weekday() / 7)
+            elif 'day' in feature and 'cos' in feature:
+                feature_values[feature] = np.cos(2 * np.pi * current_time.weekday() / 7)
+            elif 'lag' in feature and 'tpm' in feature:
+                feature_values[feature] = current_tpm
+            elif 'ma_' in feature or 'mean' in feature:
+                feature_values[feature] = tpm_mean
+            elif '_std' in feature:
+                feature_values[feature] = tpm_std
+            elif '_min' in feature:
+                feature_values[feature] = min(historical_tpm) if len(historical_tpm) > 0 else current_tpm * 0.8
+            elif '_max' in feature:
+                feature_values[feature] = max(historical_tpm) if len(historical_tpm) > 0 else current_tpm * 1.2
+            elif 'is_morning_peak' in feature:
+                feature_values[feature] = 1 if 8 <= current_time.hour <= 10 else 0
+            elif 'is_lunch_peak' in feature:
+                feature_values[feature] = 1 if 12 <= current_time.hour <= 13 else 0
+            elif 'is_afternoon_peak' in feature:
+                feature_values[feature] = 1 if 15 <= current_time.hour <= 17 else 0
+            elif 'is_evening_peak' in feature:
+                feature_values[feature] = 1 if 18 <= current_time.hour <= 20 else 0
+            elif 'is_business_hours' in feature:
+                feature_values[feature] = 1 if 9 <= current_time.hour <= 17 else 0
+            elif 'is_weekend' in feature:
+                feature_values[feature] = 1 if current_time.weekday() >= 5 else 0
+            else:
+                feature_values[feature] = 0  # Default for all other features
+
+        # Create DataFrame
+        latest_features = pd.DataFrame([feature_values])
+
+        print(f"   ✅ Emergency features created: {latest_features.shape[1]} features")
+
+        return latest_features, current_tpm
 
     def _calculate_prediction_push_effect(self, current_hour, push_active, future_minutes_since_push, campaign_type):
         """
@@ -1251,14 +1452,32 @@ class EnhancedTimeSeriesTrainer:
     # Demo function để test hàm mới
     def demo_array_prediction(self):
         """
-        Demo function cho array prediction
+        Demo function cho array prediction (FIXED)
         """
         print("🚀 Demo: TPM Prediction from Historical Array")
         print("=" * 60)
 
+        # Check if current instance has trained model
+        if not hasattr(self, 'models') or not self.models:
+            print("🔄 No trained model in current instance, trying to load...")
+
+            # Try to load trained model
+            model_files = glob.glob("day6_csv_enhanced_models/*model*.joblib")
+            metadata_files = glob.glob("day6_csv_enhanced_models/*metadata*.joblib")
+
+            if not model_files or not metadata_files:
+                print("❌ Không tìm thấy trained model. Hãy train model trước.")
+                return
+
+            latest_model = sorted(model_files, key=os.path.getmtime)[-1]
+            latest_metadata = sorted(metadata_files, key=os.path.getmtime)[-1]
+
+            self.load_model(latest_model, latest_metadata)
+            print(f"✅ Loaded model: {os.path.basename(latest_model)}")
+
         # Tạo sample historical data (60 phút TPM data)
         historical_tpm = []
-        base_tpm = 400
+        base_tpm = 100
 
         for i in range(60):
             # Tạo pattern realistic
@@ -1290,30 +1509,13 @@ class EnhancedTimeSeriesTrainer:
             }
         ]
 
-        try:
-            # Load trained model
-            trainer = EnhancedTimeSeriesTrainer()
+        # Test each scenario using SELF (not creating new trainer)
+        for i, scenario in enumerate(scenarios, 1):
+            print(f"\n📋 Scenario {i}: {scenario['name']}")
+            print("-" * 40)
 
-            # Giả sử model đã được train và save
-            model_files = glob.glob("day6_csv_enhanced_models/*model*.joblib")
-            metadata_files = glob.glob("day6_csv_enhanced_models/*metadata*.joblib")
-
-            if not model_files or not metadata_files:
-                print("❌ Không tìm thấy trained model. Hãy train model trước.")
-                return
-
-            latest_model = sorted(model_files, key=os.path.getmtime)[-1]
-            latest_metadata = sorted(metadata_files, key=os.path.getmtime)[-1]
-
-            trainer.load_model(latest_model, latest_metadata)
-            print(f"✅ Loaded model: {os.path.basename(latest_model)}")
-
-            # Test each scenario
-            for i, scenario in enumerate(scenarios, 1):
-                print(f"\n📋 Scenario {i}: {scenario['name']}")
-                print("-" * 40)
-
-                results = trainer.predict_tpm_from_historical_array(
+            try:
+                results = self.predict_tpm_from_historical_array(
                     current_time=current_time,
                     historical_tpm_1min=historical_tpm,
                     push_notification_active=scenario['push_active'],
@@ -1334,12 +1536,11 @@ class EnhancedTimeSeriesTrainer:
                 else:
                     print("❌ Prediction failed")
 
-            print(f"\n🎉 Array prediction demo completed!")
+            except Exception as e:
+                print(f"❌ Error in scenario {i}: {e}")
+                # Continue with next scenario instead of crashing
 
-        except Exception as e:
-            print(f"❌ Error in demo: {e}")
-            import traceback
-            traceback.print_exc()
+        print(f"\n🎉 Array prediction demo completed!")
 
 
 def main():

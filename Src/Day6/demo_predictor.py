@@ -365,101 +365,148 @@ class EnhancedDemoPredictor:
 
     def _create_prediction_features(self, df):
         """
-        Create features for prediction (FIXED - comprehensive feature creation)
+        Create features for prediction (COMPREHENSIVE FIX)
         """
-        print("   🔧 Creating prediction features...")
+        print("   🔧 Creating prediction features with comprehensive coverage...")
 
+        result_df = df.copy()
+
+        # ============ BASIC TIME FEATURES ============
         # Ensure all base time features exist
-        if 'hour_sin' not in df.columns:
-            df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
-            df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
-            df['day_sin'] = np.sin(2 * np.pi * df['day_of_week'] / 7)
-            df['day_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 7)
+        if 'hour_sin' not in result_df.columns:
+            result_df['hour_sin'] = np.sin(2 * np.pi * result_df['hour'] / 24)
+            result_df['hour_cos'] = np.cos(2 * np.pi * result_df['hour'] / 24)
+            result_df['day_sin'] = np.sin(2 * np.pi * result_df['day_of_week'] / 7)
+            result_df['day_cos'] = np.cos(2 * np.pi * result_df['day_of_week'] / 7)
 
-        # Business hours features
-        df['is_morning_peak'] = ((df['hour'] >= 8) & (df['hour'] <= 10)).astype(int)
-        df['is_lunch_peak'] = ((df['hour'] >= 12) & (df['hour'] <= 13)).astype(int)
-        df['is_afternoon_peak'] = ((df['hour'] >= 15) & (df['hour'] <= 17)).astype(int)
-        df['is_evening_peak'] = ((df['hour'] >= 18) & (df['hour'] <= 20)).astype(int)
+        # ============ BUSINESS HOURS FEATURES ============
+        result_df['is_morning_peak'] = ((result_df['hour'] >= 8) & (result_df['hour'] <= 10)).astype(int)
+        result_df['is_lunch_peak'] = ((result_df['hour'] >= 12) & (result_df['hour'] <= 13)).astype(int)
+        result_df['is_afternoon_peak'] = ((result_df['hour'] >= 15) & (result_df['hour'] <= 17)).astype(int)
+        result_df['is_evening_peak'] = ((result_df['hour'] >= 18) & (result_df['hour'] <= 20)).astype(int)
 
-        # Push-related features (ensure they exist)
-        if 'push_notification_active' not in df.columns:
-            df['push_notification_active'] = 0
-        if 'minutes_since_push' not in df.columns:
-            df['minutes_since_push'] = 9999
+        # ============ PUSH-RELATED FEATURES ============
+        # Ensure they exist
+        if 'push_notification_active' not in result_df.columns:
+            result_df['push_notification_active'] = 0
+        if 'minutes_since_push' not in result_df.columns:
+            result_df['minutes_since_push'] = 9999
 
-        df['is_push_daytime_effective'] = ((df['hour'] >= 7) & (df['hour'] <= 21)).astype(int)
-        df['is_push_no_effect_period'] = ((df['hour'] >= 2) & (df['hour'] <= 6)).astype(int)
+        result_df['is_push_daytime_effective'] = ((result_df['hour'] >= 7) & (result_df['hour'] <= 21)).astype(int)
+        result_df['is_push_no_effect_period'] = ((result_df['hour'] >= 2) & (result_df['hour'] <= 6)).astype(int)
 
         # Enhanced push features
-        df['in_push_delay_window'] = ((df['minutes_since_push'] >= 5) & (df['minutes_since_push'] <= 10)).astype(int)
-        df['in_push_peak_effect'] = ((df['minutes_since_push'] >= 5) & (df['minutes_since_push'] <= 10)).astype(int)
-        df['in_push_declining_effect'] = ((df['minutes_since_push'] > 10) & (df['minutes_since_push'] <= 15)).astype(
-            int)
+        result_df['in_push_delay_window'] = (
+                    (result_df['minutes_since_push'] >= 5) & (result_df['minutes_since_push'] <= 10)).astype(int)
+        result_df['in_push_peak_effect'] = (
+                    (result_df['minutes_since_push'] >= 5) & (result_df['minutes_since_push'] <= 10)).astype(int)
+        result_df['in_push_declining_effect'] = (
+                    (result_df['minutes_since_push'] > 10) & (result_df['minutes_since_push'] <= 15)).astype(int)
 
         # Push decay features
-        df['push_decay_exponential'] = df['minutes_since_push'].apply(
+        result_df['push_decay_exponential'] = result_df['minutes_since_push'].apply(
             lambda x: np.exp(-x / 8.0) if x <= 15 else 0.0
         )
-        df['push_decay_linear'] = df['minutes_since_push'].apply(
+        result_df['push_decay_linear'] = result_df['minutes_since_push'].apply(
             lambda x: max(0, 1 - x / 15.0) if x <= 15 else 0.0
         )
 
-        # Interaction features
-        df['push_hour_interaction'] = df['push_notification_active'] * df['hour']
-        df['push_weekday_interaction'] = df['push_notification_active'] * (df['day_of_week'] + 1)
-        df['push_business_hour_interaction'] = df['push_notification_active'] * df['is_business_hours']
+        # ============ INTERACTION FEATURES ============
+        result_df['push_hour_interaction'] = result_df['push_notification_active'] * result_df['hour']
+        result_df['push_weekday_interaction'] = result_df['push_notification_active'] * (result_df['day_of_week'] + 1)
+        result_df['push_business_hour_interaction'] = result_df['push_notification_active'] * result_df[
+            'is_business_hours']
 
-        # Advanced temporal features
-        df['hour_quarter_sin'] = np.sin(2 * np.pi * (df['hour'] % 6) / 6)
-        df['hour_quarter_cos'] = np.cos(2 * np.pi * (df['hour'] % 6) / 6)
+        # ============ ADVANCED TEMPORAL FEATURES ============
+        result_df['hour_quarter_sin'] = np.sin(2 * np.pi * (result_df['hour'] % 6) / 6)
+        result_df['hour_quarter_cos'] = np.cos(2 * np.pi * (result_df['hour'] % 6) / 6)
 
-        # Campaign features (binary encoding for all possible campaigns)
-        campaign_types = ['morning_commute', 'lunch_peak', 'afternoon_break', 'evening_commute', 'evening_leisure']
+        # ============ CAMPAIGN FEATURES (ALL CAMPAIGNS) ============
+        campaign_types = ['morning_commute', 'lunch_peak', 'afternoon_break',
+                          'evening_commute', 'evening_leisure', 'sleeping_hours_early', 'sleeping_hours_late']
 
         for campaign in campaign_types:
-            df[f'campaign_{campaign}'] = 0  # Default to 0
-
-        # Set actual campaign if exists
-        if 'push_campaign_type' in df.columns:
-            for campaign in campaign_types:
-                df[f'campaign_{campaign}'] = (df['push_campaign_type'] == campaign).astype(int)
+            column_name = f'campaign_{campaign}'
+            if 'push_campaign_type' in result_df.columns:
+                result_df[column_name] = (result_df['push_campaign_type'] == campaign).astype(int)
+            else:
+                result_df[column_name] = 0
 
         # Aggregated campaign features
-        df['is_peak_hour_campaign'] = ((df.get('push_campaign_type', 'none').isin(
-            ['lunch_peak', 'evening_commute'])) if 'push_campaign_type' in df.columns else pd.Series(
-            [0] * len(df))).astype(int)
-        df['is_commute_campaign'] = ((df.get('push_campaign_type', 'none').isin(
-            ['morning_commute', 'evening_commute'])) if 'push_campaign_type' in df.columns else pd.Series(
-            [0] * len(df))).astype(int)
-        df['is_no_effect_campaign'] = 0  # Default
+        if 'push_campaign_type' in result_df.columns:
+            result_df['is_peak_hour_campaign'] = result_df['push_campaign_type'].isin(
+                ['lunch_peak', 'evening_commute']).astype(int)
+            result_df['is_commute_campaign'] = result_df['push_campaign_type'].isin(
+                ['morning_commute', 'evening_commute']).astype(int)
+            result_df['is_no_effect_campaign'] = result_df['push_campaign_type'].isin(
+                ['sleeping_hours_early', 'sleeping_hours_late']).astype(int)
+        else:
+            result_df['is_peak_hour_campaign'] = 0
+            result_df['is_commute_campaign'] = 0
+            result_df['is_no_effect_campaign'] = 0
 
-        # Sequence features if enough data
-        if 'push_notification_active' in df.columns:
-            df['cumulative_pushes'] = df['push_notification_active'].cumsum()
+        # Push timing quality
+        result_df['push_timing_quality'] = result_df.apply(
+            lambda row: self._calculate_push_timing_quality_local(
+                row['hour'],
+                str(row.get('push_campaign_type', 'none'))
+            ), axis=1
+        )
 
-            # Rolling features (simplified)
-            window_size = min(12, len(df))  # 12 minutes window or available data
-            df['pushes_last_hour'] = df['push_notification_active'].rolling(window=window_size, min_periods=1).sum()
-            df['pushes_last_day'] = df['pushes_last_hour']  # Simplified for short data
+        # ============ SEQUENCE FEATURES ============
+        if 'push_notification_active' in result_df.columns:
+            result_df['cumulative_pushes'] = result_df['push_notification_active'].cumsum()
 
-        # Lag features if enough data
-        if len(df) >= 5:
-            df['tpm_lag_1'] = df['tpm'].shift(1)
-            df['tpm_lag_2'] = df['tpm'].shift(2)
-            df['tpm_lag_5'] = df['tpm'].shift(5) if len(df) >= 6 else df['tpm'].shift(1)
+            # Rolling features
+            window_size = min(12, len(result_df))
+            result_df['pushes_last_hour'] = result_df['push_notification_active'].rolling(window=window_size,
+                                                                                          min_periods=1).sum()
+            result_df['pushes_last_day'] = result_df['pushes_last_hour']
+
+        # ============ LAG AND ROLLING FEATURES ============
+        if len(result_df) >= 5:
+            result_df['tpm_lag_1'] = result_df['tpm'].shift(1)
+            result_df['tpm_lag_2'] = result_df['tpm'].shift(2)
+            result_df['tpm_lag_5'] = result_df['tpm'].shift(5) if len(result_df) >= 6 else result_df['tpm'].shift(1)
 
             # Rolling statistics
-            df['tpm_ma_5'] = df['tpm'].rolling(window=5, min_periods=1).mean()
-            df['tpm_ma_15'] = df['tpm'].rolling(window=min(15, len(df)), min_periods=1).mean()
-            df['tpm_std_5'] = df['tpm'].rolling(window=5, min_periods=1).std().fillna(0)
+            result_df['tpm_ma_5'] = result_df['tpm'].rolling(window=5, min_periods=1).mean()
+            result_df['tpm_ma_15'] = result_df['tpm'].rolling(window=min(15, len(result_df)), min_periods=1).mean()
+            result_df['tpm_std_5'] = result_df['tpm'].rolling(window=5, min_periods=1).std().fillna(0)
+            result_df['tpm_min_5'] = result_df['tpm'].rolling(window=5, min_periods=1).min()
+            result_df['tpm_max_5'] = result_df['tpm'].rolling(window=5, min_periods=1).max()
 
-        # Fill NaN values
-        df = df.fillna(method='bfill').fillna(method='ffill').fillna(0)
+        # ============ COMPREHENSIVE CLEANUP ============
+        # Fill NaN values comprehensively
+        result_df = result_df.fillna(method='bfill').fillna(method='ffill').fillna(0)
 
-        print(f"   ✅ Created {len(df.columns)} total columns")
+        # Handle infinite values
+        result_df = result_df.replace([np.inf, -np.inf], 0)
 
-        return df
+        print(f"   ✅ Created {len(result_df.columns)} comprehensive features")
+
+        return result_df
+
+    def _calculate_push_timing_quality_local(self, hour, campaign_type):
+        """Local version of push timing quality calculation"""
+        optimal_hours = {
+            'morning_commute': [7, 8, 9],
+            'lunch_peak': [11, 12, 13],
+            'afternoon_break': [14, 15, 16],
+            'evening_commute': [17, 18, 19],
+            'evening_leisure': [19, 20, 21]
+        }
+
+        if campaign_type == 'none' or campaign_type not in optimal_hours:
+            return 0.5
+
+        if hour in optimal_hours[campaign_type]:
+            return 1.0
+
+        min_distance = min([abs(hour - h) for h in optimal_hours[campaign_type]])
+        quality = max(0.1, 1.0 - (min_distance * 0.15))
+
+        return quality
 
     def _calculate_prediction_push_effect(self, current_hour, push_active, future_minutes_since_push, campaign_type):
         """
@@ -1003,22 +1050,22 @@ def main():
             print("\n🎯 Running enhanced prediction demos...")
 
             # Demo 1: Real-time prediction with sample data
-            predictor.demo_real_time_prediction()
-
-            # Demo 2: Multiple scenarios
-            predictor.demo_multiple_scenarios()
+            # predictor.demo_real_time_prediction()
+            #
+            # # Demo 2: Multiple scenarios
+            # predictor.demo_multiple_scenarios()
 
             # Demo 2: Built-in array prediction
             print("\n" + "=" * 60)
             predictor.demo_built_in_array_prediction()
 
             # Demo 3: Custom array scenarios
-            print("\n" + "=" * 60)
-            predictor.demo_custom_array_scenarios()
+            # print("\n" + "=" * 60)
+            # predictor.demo_custom_array_scenarios()
 
             # Demo 4: Array vs 3H data comparison
-            print("\n" + "=" * 60)
-            predictor.compare_array_vs_3h_data()
+            # print("\n" + "=" * 60)
+            # predictor.compare_array_vs_3h_data()
 
             # Demo 5: Direct trainer demo
             # print("\n" + "=" * 60)
